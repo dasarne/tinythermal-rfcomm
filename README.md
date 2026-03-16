@@ -4,6 +4,14 @@ Unofficial Linux Bluetooth printing toolkit for small thermal label/receipt prin
 
 This project is not affiliated with or endorsed by any printer vendor.
 
+## Project Principle
+
+This repository is intentionally context-rich so future maintainers (human or AI) can continue quickly:
+
+- understand what is known
+- understand what is inferred
+- reproduce and extend with minimal repeated discovery work
+
 ## Compatibility Scope
 
 - Protocol was derived on a Katasymbol E10 (manufacturing year 2025).
