@@ -50,15 +50,22 @@ The following diagram is the reference flow for one print job.
 Section 4 and Section 5 map directly to these steps.
 
 ```mermaid
-flowchart LR
-    A["Input image"] --> B["Preprocess image (rotate, fit, dither)"]
-    B --> C["Raster packing to btbuf"]
-    C --> D["LZMA alone (dict 8 KiB)"]
-    D --> E["Chunk into 504-byte aabb payloads"]
-    E --> F["Build command frames (7e5a + 1001/1002)"]
-    F --> G["Send over RFCOMM"]
-    G --> H["aa10 trigger"]
-    H --> I["Printer prints"]
+flowchart TB
+    subgraph R1[" "]
+        direction LR
+        A["Input image"] --> B["Preprocess image"] --> C["Raster to btbuf"]
+    end
+    subgraph R2[" "]
+        direction LR
+        D["LZMA compress"] --> E["Split to aabb chunks"] --> F["Build 1001/1002 frames"]
+    end
+    subgraph R3[" "]
+        direction LR
+        G["Send via RFCOMM"] --> H["Send aa10 trigger"] --> I["Printer prints"]
+    end
+
+    C --> D
+    F --> G
 ```
 
 ## 4. On-Wire Message Structure
