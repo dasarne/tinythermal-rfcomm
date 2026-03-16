@@ -4,6 +4,12 @@ Unofficial Linux Bluetooth printing toolkit for small thermal label/receipt prin
 
 This project is not affiliated with or endorsed by any printer vendor.
 
+## Compatibility Scope
+
+- Protocol was derived on a Katasymbol E10 (manufacturing year 2025).
+- Runtime tests were performed only on this exact device family/sample.
+- Other models/firmware revisions may require protocol or timing adjustments.
+
 ## What It Does
 
 - Converts an input image to the printer bitstream (`btbuf`).
@@ -112,6 +118,14 @@ Artifacts:
 
 - Protocol details: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 - Failure handling and operational notes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- AI/LLM handover context: [INFO_FOR_AI.md](INFO_FOR_AI.md)
+
+## Transparency
+
+- This repository was largely developed with GPT-5.3/Codex assistance ("vibe-coded").
+- Treat the source as a practical reverse-engineering artifact, not as a formally verified implementation.
+- The maintainer may not be able to provide deeper internals beyond what is documented here.
+- The project intentionally keeps rich logs/context to help future maintainers and LLM-based contributors continue the work.
 
 ## Repository Layout
 

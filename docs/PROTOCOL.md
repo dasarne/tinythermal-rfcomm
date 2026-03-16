@@ -9,6 +9,8 @@ Scope:
 
 - based on observed traffic and current implementation in `scripts/replay_sender.py`
 - some command semantics are inferred, not officially documented by vendor
+- protocol discovery and validation were done on Katasymbol E10 (2025 build year)
+- currently tested only on that device line/sample
 
 ## 1. Big Picture for Newcomers
 
