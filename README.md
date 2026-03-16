@@ -1,20 +1,34 @@
-# Katasymbol Linux Printing (RFCOMM)
+# tinythermal-rfcomm
 
-This repo contains a working Linux print path for a Katasymbol thermal printer over Bluetooth RFCOMM.
+Unofficial Linux Bluetooth printing toolkit for small thermal label/receipt printers that expose an RFCOMM Serial Port profile.
 
-## Requirements
+This project is not affiliated with or endorsed by any printer vendor.
 
-- Manjaro/Arch packages:
-  - `bluez`
-  - `bluez-utils`
-  - `python`
-  - `python-pillow`
-- Bluetooth service:
-  - `sudo systemctl enable --now bluetooth.service`
+## What It Does
 
-## 3-Command Quickstart
+- Converts an input image to the printer bitstream (`btbuf`).
+- Compresses and packets data into protocol chunks (`aabb` frames).
+- Replays a known-good command sequence over Bluetooth RFCOMM.
+- Provides a high-level CLI that can auto-select templates and optionally auto-discover a printer.
 
-1. Pair and trust device (once):
+## Current Status
+
+- Works on Linux (tested on Manjaro/KDE) with BlueZ.
+- Protocol path is reverse-engineered from real captures.
+- Known risk: some printers can enter a bad firmware state (freeze/no reset path) after failed sessions.
+
+Read this first: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
+## Install
+
+```bash
+sudo pacman -S --needed bluez bluez-utils python python-pillow
+sudo systemctl enable --now bluetooth.service
+```
+
+## Quickstart (First Print)
+
+1. Pair and trust printer once:
 
 ```bash
 bluetoothctl
@@ -22,94 +36,64 @@ power on
 agent on
 default-agent
 scan on
-# wait for device MAC, then:
-pair A4:93:40:5E:7B:74
-trust A4:93:40:5E:7B:74
+# find printer MAC
+pair AA:BB:CC:DD:EE:FF
+trust AA:BB:CC:DD:EE:FF
 scan off
 quit
 ```
 
-2. Link test:
+2. Optional link check:
 
 ```bash
-sudo l2ping -c 3 A4:93:40:5E:7B:74
-sudo rfcomm -i hci0 connect 0 A4:93:40:5E:7B:74 1
+sudo l2ping -c 3 AA:BB:CC:DD:EE:FF
 ```
 
-3. Print image:
+3. Print:
 
 ```bash
-sudo python3 scripts/katasymbol_print.py test_pattern_64x32.png
+sudo python3 scripts/katasymbol_print.py test_pattern_64x32.png --mac AA:BB:CC:DD:EE:FF
 ```
 
-By default, the wrapper auto-selects the newest decoded dump in `out/decode/` as template source.
-If no `--mac` is given, it tries config MAC first, then Bluetooth auto-discovery.
+## User CLI
 
-## Main CLI
-
-Use this for normal printing:
+Main command:
 
 ```bash
-sudo python3 scripts/katasymbol_print.py <image.png>
+sudo python3 scripts/katasymbol_print.py <image>
 ```
 
 Useful options:
 
-- `--config <path>`: use another config file.
-- `--init-config`: create default config and exit.
-- `--print-config`: print effective config and exit.
-- `--mac <MAC>`: explicit printer MAC (overrides config/discovery).
-- `--printer-name-pattern <str>`: extra matching token for auto-discovery (repeatable).
-- `--no-auto-discover`: require explicit/configured MAC.
-- `--dry-run`: build payloads/logs only, do not send.
-- `--channels 1,2,3`: fallback channel list.
-- `--keep-template-aabb`: diagnostic mode (sends captured template payload).
-- `--lzma-encoder xz`: use `xz` backend instead of Python `lzma` for generated payload.
-- Image preparation (enabled by default):
-  - `--rotate auto|0|90|180|270` (`auto`: lange Bildseite bleibt Drucklaenge)
-  - `--fit-mode shrink|fit|stretch`
-  - `--dither auto|threshold|floyd|ordered`
-  - `--align center|top|bottom`
-  - `--offset-x N`, `--offset-y N`
-  - `--head-height N` (default from template geometry)
-  - `--no-prepare` to bypass preprocessing.
+- `--mac <MAC>`: explicit printer MAC.
+- `--dry-run`: build payload/artifacts only, do not send.
+- `--fit-mode shrink|fit|stretch`
+- `--rotate auto|0|90|180|270`
+- `--dither auto|threshold|floyd|ordered`
+- `--config <path>`: use alternate config file.
+- `--print-config`: print merged defaults.
 
-Artifacts are written to `out/replay_sender/<timestamp>/`:
+Artifacts:
 
-- `meta.json`
-- `send_log.json` (when `--send`)
-- `btbuf.bin`, `lzma.bin`, `aabb_*.bin`, `frames.bin`
+- `out/replay_sender/<timestamp>/meta.json`
+- `out/replay_sender/<timestamp>/send_log.json` (when sending)
+- `out/replay_sender/<timestamp>/btbuf.bin`
 
-## Defaults File
+## Developer Docs
 
-On first run, `scripts/katasymbol_print.py` creates `.katasymbol_print.json` in the current directory if missing.
-This file contains defaults for:
+- Protocol details: [docs/PROTOCOL.md](docs/PROTOCOL.md)
+- Failure handling and operational notes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
-- printer selection (`mac`, `auto_discover`, `name_patterns`)
-- connection timing (`channel`, `channels`, timeouts, delays)
-- image preprocessing (`rotate`, `fit_mode`, `dither`, alignment/offsets)
-- transfer toggles (`scale_to_canvas_width`, `use_template_nozero`)
+## Repository Layout
 
-## Tools
+- `scripts/katasymbol_print.py`: user-facing print wrapper
+- `scripts/replay_sender.py`: low-level protocol sender
+- `scripts/decode_spp.py`: decode outgoing SPP/BTSnoop captures
+- `scripts/decode_lzma_btbuf.py`: decode captured `aabb` payloads
+- `scripts/analyze_payloads.py`: compare and inspect payload behavior
 
-- `scripts/katasymbol_print.py`: user-facing wrapper.
-- `scripts/replay_sender.py`: protocol sender/engine.
-- `scripts/decode_spp.py`: decode SPP stream from dumpstate `btsnoop_hci.log`.
-- `scripts/decode_lzma_btbuf.py`: decode `aabb` payloads to btBuf and render.
+## Safety Notes
 
-## CUPS Backend Sketch (optional)
-
-If you later want CUPS integration, create a backend script that receives the print file from CUPS and forwards it to `katasymbol_print.py`.
-
-Minimal sketch:
-
-```sh
-#!/bin/sh
-# /usr/lib/cups/backend/katasymbol
-# argv: job-id user title copies options [file]
-FILE="$6"
-[ -z "$FILE" ] && FILE="-"
-/usr/bin/python3 /path/to/Katasymbol/scripts/katasymbol_print.py "$FILE" --mac A4:93:40:5E:7B:74
-```
-
-Then map queue data to PNG/PBM before calling the script (e.g. with ImageMagick/Ghostscript filter chain).
+- Do not send repeated stress runs without pauses.
+- If the printer becomes unresponsive, stop sending immediately.
+- Prefer one print job per power cycle while debugging.
