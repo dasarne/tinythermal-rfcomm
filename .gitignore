@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local config/state
+.katasymbol_print.json
+
+# Build / runtime artifacts
+out/
+
+# Large reverse-engineering artifacts and dumps
+*.zip
+*.xapk
+
+# Local screenshots/desktop exports
+Bildschirmfoto_*.png
