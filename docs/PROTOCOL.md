@@ -51,22 +51,38 @@ Section 4 and Section 5 map directly to these steps.
 
 ```mermaid
 flowchart TB
-    subgraph R1[" "]
+    A["Input image"]
+
+    subgraph R1["Image transfer"]
         direction LR
-        A["Input image"] --> B["Preprocess image"] --> C["Raster to btbuf"]
+        B["Preprocess image"] --> C["Raster to btbuf"]
     end
-    subgraph R2[" "]
+
+    subgraph R2["Ripping"]
         direction LR
         D["LZMA compress"] --> E["Split to aabb chunks"] --> F["Build 1001/1002 frames"]
     end
-    subgraph R3[" "]
+
+    subgraph R3["Transfer"]
         direction LR
-        G["Send via RFCOMM"] --> H["Send aa10 trigger"] --> I["Printer prints"]
+        G["Send via RFCOMM"] --> H["Send aa10 trigger"]
     end
 
+    I["Printer prints"]
+
+    A --> B
     C --> D
     F --> G
+    H --> I
 ```
+
+Group intent:
+
+- `Input image`: user-provided source file
+- `Image transfer`: image-side preparation into printer raster format
+- `Ripping`: conversion from raster buffer into protocol payload units
+- `Transfer`: Bluetooth transport and print trigger
+- `Printer prints`: physical output state
 
 ## 4. On-Wire Message Structure
 
