@@ -51,14 +51,14 @@ Section 4 and Section 5 map directly to these steps.
 
 ```mermaid
 flowchart LR
-    A[Input image] --> B[Preprocess image\nrotate/fit/dither]
-    B --> C[Raster packing\nbtbuf]
-    C --> D[LZMA alone\n(dict 8 KiB)]
-    D --> E[Chunk to 504-byte aabb payloads]
-    E --> F[Build command frames\n7e5a + 1001/1002]
-    F --> G[Send over RFCOMM]
-    G --> H[aa10 trigger]
-    H --> I[Printer prints]
+    A["Input image"] --> B["Preprocess image (rotate, fit, dither)"]
+    B --> C["Raster packing to btbuf"]
+    C --> D["LZMA alone (dict 8 KiB)"]
+    D --> E["Chunk into 504-byte aabb payloads"]
+    E --> F["Build command frames (7e5a + 1001/1002)"]
+    F --> G["Send over RFCOMM"]
+    G --> H["aa10 trigger"]
+    H --> I["Printer prints"]
 ```
 
 ## 4. On-Wire Message Structure
