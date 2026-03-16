@@ -118,6 +118,7 @@ Artifacts:
 
 - Protocol details: [docs/PROTOCOL.md](docs/PROTOCOL.md)
 - Failure handling and operational notes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- Reverse engineering workflow: [docs/REVERSE_ENGINEERING_HOWTO.md](docs/REVERSE_ENGINEERING_HOWTO.md)
 - AI/LLM handover context: [INFO_FOR_AI.md](INFO_FOR_AI.md)
 
 ## Transparency
