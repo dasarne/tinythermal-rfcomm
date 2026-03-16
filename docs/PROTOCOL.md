@@ -1,122 +1,225 @@
-# Protocol Notes (Reverse Engineered)
+# Protocol Guide (Reverse Engineered)
 
-This document captures the current understanding of the Bluetooth print protocol used by this project.
-It is derived from real traffic captures and implementation behavior in `scripts/replay_sender.py`.
+This document explains the protocol used by this project from two angles:
 
-## Transport
+- practical developer details (how to build frames and send jobs)
+- beginner-friendly context (what standards are involved and why)
 
-- Bluetooth RFCOMM socket (`AF_BLUETOOTH`, `SOCK_STREAM`, `BTPROTO_RFCOMM`)
-- Typical channel: `1` (fallback scan may try multiple channels)
+Scope:
 
-## Frame Envelope
+- based on observed traffic and current implementation in `scripts/replay_sender.py`
+- some command semantics are inferred, not officially documented by vendor
 
-Every command frame starts with:
+## 1. Big Picture for Newcomers
 
-- `0x7e 0x5a` (sync)
-- `len_le16` (payload length after sync/len)
-- `0x10 0x01` or `0x10 0x02` (message type)
+The printer behaves like a small Bluetooth serial device:
 
-### Type `0x1001`
+1. Linux opens a Bluetooth RFCOMM socket (serial-over-Bluetooth).
+2. The host sends a command sequence (`aa..` commands).
+3. Image data is rasterized, packed into a custom buffer (`btbuf`), compressed with LZMA, then chunked.
+4. Chunks are transferred as `aabb` messages.
+5. A trigger command (`aa10`) starts physical printing.
 
-`build_1001(cmd_hex, payload)`:
+In short:
 
-- sync `7e5a`
-- `len = 4 + payload_len` (little endian)
-- type `1001`
-- command `aa??` in big-endian (`aa11`, `aa30`, ...)
-- payload
+`image -> btbuf -> lzma -> aabb chunks -> RFCOMM commands -> print`
 
-### Type `0x1002` (`aabb` only)
+## 2. Standards and Building Blocks
 
-`build_1002_aabb(payload_504)`:
+This project uses standard Bluetooth transport layers plus a vendor-specific payload protocol.
 
-- sync `7e5a`
-- fixed length `0x01fc` (little endian)
-- type `1002`
+- `Bluetooth BR/EDR`: classic Bluetooth radio mode (not BLE-only GATT printing)
+- `L2CAP`: lower transport layer inside Bluetooth stack
+- `RFCOMM`: serial-port emulation on top of L2CAP
+- `SDP`: service discovery (used to find Serial Port profile/channel)
+
+What is standard here:
+
+- opening RFCOMM sockets
+- pairing/trusting device via BlueZ tools
+
+What is proprietary/custom:
+
+- message payload format (`7e5a ... aa..`)
+- command meanings (`aa11`, `aa5c`, `aabb`, `aa10`, ...)
+- raster and compression conventions expected by firmware
+
+## 3. End-to-End Flow Diagram
+
+The following diagram is the reference flow for one print job.
+Section 4 and Section 5 map directly to these steps.
+
+```mermaid
+flowchart LR
+    A[Input image] --> B[Preprocess image\nrotate/fit/dither]
+    B --> C[Raster packing\nbtbuf]
+    C --> D[LZMA alone\n(dict 8 KiB)]
+    D --> E[Chunk to 504-byte aabb payloads]
+    E --> F[Build command frames\n7e5a + 1001/1002]
+    F --> G[Send over RFCOMM]
+    G --> H[aa10 trigger]
+    H --> I[Printer prints]
+```
+
+## 4. On-Wire Message Structure
+
+Every protocol frame starts with the same envelope header:
+
+- sync: `0x7e 0x5a`
+- length: little-endian 16-bit (`len_le16`)
+- type: `0x1001` or `0x1002`
+
+### 4.1 Type `0x1001` (generic command frame)
+
+Built by `build_1001(cmd_hex, payload)`:
+
+- `7e5a`
+- `len = 4 + payload_len` (little-endian)
+- `1001`
+- command in big-endian (`aa11`, `aa30`, ...)
+- payload bytes
+
+### 4.2 Type `0x1002` (`aabb` data frame)
+
+Built by `build_1002_aabb(payload_504)`:
+
+- `7e5a`
+- fixed length `0x01fc` (little-endian)
+- `1002`
 - command `aabb`
-- exactly 504 bytes payload
+- exactly 504 payload bytes
 
-## High-Level Print Sequence
+## 5. Print Session Sequence
 
-The sender reuses a captured job sequence (`messages.csv`) and swaps data-bearing `aabb` payload(s):
+The sender replays a captured, known-good sequence and swaps only image-carrying parts.
 
-1. Setup/status commands from template (`aa11`, `aa30`, `aa18`, ...)
-2. Transfer setup (`aa5c`) with a generated payload:
-   - `checksum_le16 + 00 01 + frame_size_le16 + frame_count_le16`
-3. One or more `aabb` frames (`1002` envelope, 504-byte payload each)
-4. Transfer trigger (`aa10`)
-5. Optional extra template frames after `aa10` (`post_frames_after_aa10`)
+```mermaid
+sequenceDiagram
+    participant Host
+    participant Printer
+    Host->>Printer: aa11 / aa30 / aa18 ... (status/setup from template)
+    Host->>Printer: aa5c(start-transfer metadata)
+    loop for each compressed chunk
+        Host->>Printer: aabb (type 1002, 504-byte payload)
+    end
+    Host->>Printer: aa10 (execute/print trigger)
+    Note over Host,Printer: optional few trailing template frames
+```
 
-Default behavior stops shortly after `aa10` to reduce risk.
+Important:
 
-## Image to `btbuf`
+- this project intentionally keeps this sequence close to real app captures
+- that minimizes firmware rejection risk
 
-Raster format generated into fixed `btbuf` (4000 bytes):
+## 6. Image Conversion and `btbuf`
 
-- `btbuf[2:4] = 0x100e` (little endian)
-- `btbuf[4:6] = width_le16` (effective width after optional trim)
-- `btbuf[6] = bytes_per_col` (usually `12` => `96` dots high)
+The printer does not receive PNG/JPEG directly. It receives a packed monochrome raster buffer (`btbuf`).
+
+Core format fields (current implementation):
+
+- `btbuf[2:4] = 0x100e` (LE)
+- `btbuf[4:6] = effective_width` (LE)
+- `btbuf[6] = bytes_per_col` (usually 12 => 96 dots head height)
 - `btbuf[8:10] = 1`, `btbuf[10:12] = 1`
-- `btbuf[12] = no_zero_index` (leading-column trim marker)
-- bitmap data starts at `btbuf[14]`
+- `btbuf[12] = no_zero_index` (leading blank-column trim marker)
+- `btbuf[14...] = raster bytes`
 
-Bitmap packing:
+Raster packing:
 
-- one column = `bytes_per_col` bytes
-- each byte packs 8 vertical pixels
+- one x-column contains `bytes_per_col` bytes
+- each byte represents 8 vertical pixels
 - bit order is LSB-first
-- black pixel maps to bit `1`
+- black pixel => bit `1`
 
-Header checksum:
+This gives a compact 1-bit vertical-column stream expected by firmware.
 
-- `btbuf[0:2]` = sum-based checksum used by app/protocol.
-- Computed over header and periodic marker bytes as implemented in `image_to_btbuf_with_canvas`.
+## 7. Checksums and Compression
 
-## LZMA and `aabb` Chunking
+## 7.1 `btbuf` header checksum
 
-`btbuf` is compressed with LZMA "alone" format:
+`btbuf[0:2]` holds a sum-based checksum used by the device protocol.
+It is computed in `image_to_btbuf_with_canvas(...)`.
 
-- filter: `LZMA1`
-- dict: `8 KiB`
-- params: `lc=3, lp=0, pb=2, mode=normal, nice_len=128, mf=bt4`
+## 7.2 LZMA encoding
 
-Compressed bytes are split into chunks of up to `500` bytes.
-Each chunk becomes a 504-byte `aabb` payload:
+`btbuf` is compressed in "LZMA alone" format with:
 
-- bytes `[2]` chunk index
-- byte `[3]` total chunks
-- bytes `[4..]` chunk data
-- bytes `[0:2]` chunk checksum (`sum(payload[2:504]) & 0xffff`, little endian)
+- filter `LZMA1`
+- dictionary `8 KiB`
+- `lc=3`, `lp=0`, `pb=2`, `mode=normal`, `nice_len=128`, `mf=bt4`
 
-## Template-Dependent Behavior
+## 7.3 `aabb` chunk checksum
 
-Two fields from captured template geometry matter:
+Compressed stream is split into 500-byte parts.
+Each part goes into a 504-byte payload:
+
+- `[2] = chunk index`
+- `[3] = chunk count`
+- `[4...] = data`
+- `[0:2] = sum(payload[2:504]) & 0xffff` (LE)
+
+## 8. Template-Dependent Behavior
+
+Two template values influence output strongly:
 
 - `width`
 - `no_zero_index`
 
-When `--use-template-nozero` is enabled:
+With `--use-template-nozero`:
 
-- canvas width uses `template_width + template_nozero`
-- `btbuf[12]` forced from template
-- data is shifted accordingly to match expected firmware behavior
+- canvas width uses `template_width + template_no_zero_index`
+- `btbuf[12]` is forced from template
+- left-shift behavior better matches firmware expectations seen in captures
 
-## Commands Observed in Print Jobs
+This is one reason replaying against a known template is currently more reliable than "from scratch" generation.
 
-Frequently seen:
+## 9. Command Families Seen So Far
 
-- `aa11`, `aa30`, `aa18`: status/poll/control style exchanges
-- `aad0`, `aad1`: transfer-related setup blocks
-- `aab0`, `aac9`, `aa13`, `aaba`: mode/state transitions
-- `aa5c`: start-transfer metadata
-- `aabb`: compressed raster chunks
-- `aa10`: execute/print trigger
+Observed command IDs in print jobs:
 
-Exact semantics are partially inferred. Use `send_log.json` and captures to validate on new hardware variants.
+- `aa11`, `aa30`, `aa18`: frequent polling/state commands
+- `aad0`, `aad1`: transfer setup/blocks
+- `aab0`, `aac9`, `aa13`, `aaba`: mode or state transitions
+- `aa5c`: transfer metadata/start
+- `aabb`: compressed image chunks
+- `aa10`: print trigger
 
-## Capture/Decode Toolchain
+Caution:
 
-- `scripts/decode_spp.py`: decode outgoing print jobs from `btsnoop_hci.log`
-- `scripts/decode_lzma_btbuf.py`: reconstruct `btbuf` and rendered images from captured `aabb`
+- exact semantic names are inferred from behavior
+- keep captures/logs when extending support for other printer variants
 
-These tools are the reference for extending support and validating protocol changes.
+## 10. How to Build Your Own Driver from This
+
+Minimal recipe:
+
+1. Open RFCOMM connection to printer channel.
+2. Send pre-transfer command sequence similar to known-good capture.
+3. Convert input image to 1-bit vertical-column raster (`btbuf` layout above).
+4. LZMA-compress with matching parameters.
+5. Chunk into 504-byte `aabb` payloads and send each in `0x1002` envelope.
+6. Send `aa10` trigger.
+7. Optionally poll status (`aa11` style) around transfer/print phases.
+
+If your own implementation fails intermittently, compare:
+
+- exact bytes sent for `aa5c`, `aabb`, `aa10`
+- timing gaps between frames
+- template-dependent fields (`width`, `no_zero_index`)
+
+## 11. Validation and Tooling in This Repo
+
+- `scripts/decode_spp.py`: extracts outgoing messages from captures
+- `scripts/decode_lzma_btbuf.py`: decodes `aabb` payloads back to raster
+- `scripts/replay_sender.py`: canonical sender implementation for this repo
+
+Use `send_log.json` and `meta.json` from `out/replay_sender/<timestamp>/` for regression checks.
+
+## 12. Known Limits
+
+- No official vendor spec available.
+- Firmware can enter unstable/frozen states on some failures.
+- Pairing/connect behavior can differ across adapters and OS configs.
+- Command semantics may differ slightly across printer firmware generations.
+
+For operational failure handling, see [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md).

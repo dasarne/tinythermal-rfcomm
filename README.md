@@ -21,9 +21,33 @@ Read this first: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Install
 
+Arch / Manjaro:
+
 ```bash
 sudo pacman -S --needed bluez bluez-utils python python-pillow
 sudo systemctl enable --now bluetooth.service
+```
+
+Debian / Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install -y bluez python3 python3-pil
+sudo systemctl enable --now bluetooth
+```
+
+Fedora:
+
+```bash
+sudo dnf install -y bluez bluez-tools python3 python3-pillow
+sudo systemctl enable --now bluetooth
+```
+
+openSUSE (Tumbleweed/Leap):
+
+```bash
+sudo zypper install -y bluez python3 python3-Pillow
+sudo systemctl enable --now bluetooth
 ```
 
 ## Quickstart (First Print)
@@ -32,6 +56,11 @@ sudo systemctl enable --now bluetooth.service
 
 ```bash
 bluetoothctl
+```
+
+Then, in the interactive `bluetoothctl` prompt, enter:
+
+```text
 power on
 agent on
 default-agent
