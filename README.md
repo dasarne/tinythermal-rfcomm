@@ -29,6 +29,9 @@ This repository is intentionally context-rich so future maintainers (human or AI
 
 - Works on Linux (tested on Manjaro/KDE) with BlueZ.
 - Protocol path is reverse-engineered from real captures.
+- Default short-label path is stable for everyday printing.
+- Long bitmap labels can now be reproduced essentially at vendor quality.
+- Suitable long bitmap inputs are auto-detected; no extra CLI flag is normally required.
 - Known risk: some printers can enter a bad firmware state (freeze/no reset path) after failed sessions.
 
 Read this first: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
@@ -106,13 +109,36 @@ Main command:
 sudo python3 scripts/katasymbol_print.py <image>
 ```
 
+Current wrapper defaults already use the known-good production path:
+
+- image preprocessing enabled
+- content-aware white-margin crop enabled
+- Java LZMA encoder
+- `decoded-template-bbox` raster compatibility preset
+- Bluetooth auto-discovery/template auto-selection when available
+
+Supported input formats:
+
+- raster: `PNG`, `JPG`
+- vector: `SVG` (rasterized automatically via `rsvg-convert`, fallback `magick`)
+
 Useful options:
 
 - `--mac <MAC>`: explicit printer MAC.
 - `--dry-run`: build payload/artifacts only, do not send.
+- `--prepare-only`: only run image preprocessing, then exit (no protocol build/send).
+- `--bt-preflight`: enable Bluetooth wakeup/scan/l2ping preflight before sending.
+- `--slow`: fallback timing mode using original template pacing.
+- `--aggressive`: riskier transport mode with extra post-trigger frames and shorter inter-frame delay.
+- `--long-label-svg`: use the current long SVG research preset.
+- `--long-label-bitmap`: explicit override for the current best long bitmap preset based on `InkscapeTest2/job_002`.
+- `--lzma-encoder java|python|xz`: transfer encoder backend. `java` is the current default and known-good path.
+- `--compat-raster-preset ...`: reverse-engineering/testing override. Normal users should not need this.
 - `--fit-mode shrink|fit|stretch`
 - `--rotate auto|0|90|180|270`
 - `--dither auto|threshold|floyd|ordered`
+- `--no-crop-content`: keep original white margins instead of cropping to visible content
+- `--despeckle`: optional removal of isolated black speckles; useful for noisy line art, not enabled by default
 - `--config <path>`: use alternate config file.
 - `--print-config`: print merged defaults.
 
@@ -122,9 +148,70 @@ Artifacts:
 - `out/replay_sender/<timestamp>/send_log.json` (when sending)
 - `out/replay_sender/<timestamp>/btbuf.bin`
 
+Image-prep only (recommended to verify rotation/sizing before sending):
+
+```bash
+python3 scripts/katasymbol_print.py <image> --prepare-only
+```
+
+Normal send mode:
+
+```bash
+sudo python3 scripts/katasymbol_print.py <image>
+```
+
+Send with explicit Bluetooth wakeup/preflight:
+
+```bash
+sudo python3 scripts/katasymbol_print.py <image> --bt-preflight
+```
+
+Long physical SVG label preset:
+
+```bash
+sudo python3 scripts/katasymbol_print.py Inkscape-Test.svg --long-label-svg
+```
+
+Note:
+
+- `--long-label-svg` is still an experimental frontend path.
+- The long-label transport/raster path itself is understood, but SVG rasterization is not yet matched to the vendor app as closely as the bitmap path.
+
+Long physical bitmap label:
+
+```bash
+sudo python3 scripts/katasymbol_print.py Inkscape-Test.png
+```
+
+Current assessment:
+
+- this is the best known long-label path
+- auto-selection chooses the long bitmap preset for suitable wide bitmap inputs
+- `--long-label-bitmap` remains available as an explicit override
+
+Slower fallback mode for diagnostics:
+
+```bash
+sudo python3 scripts/katasymbol_print.py <image> --slow
+```
+
+Aggressive mode for transport experiments:
+
+```bash
+sudo python3 scripts/katasymbol_print.py <image> --aggressive
+```
+
+Encoder dry-run matrix:
+
+```bash
+python3 scripts/analyze_lzma_encoders.py
+```
+
 ## Developer Docs
 
 - Protocol details: [docs/PROTOCOL.md](docs/PROTOCOL.md)
+- Reference model and regression workflow: [docs/REFERENCE_STRATEGY.md](docs/REFERENCE_STRATEGY.md)
+- Architecture assessment and refactor direction: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Failure handling and operational notes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 - Reverse engineering workflow: [docs/REVERSE_ENGINEERING_HOWTO.md](docs/REVERSE_ENGINEERING_HOWTO.md)
 - AI/LLM handover context: [INFO_FOR_AI.md](INFO_FOR_AI.md)
@@ -140,6 +227,10 @@ Artifacts:
 
 - `scripts/katasymbol_print.py`: user-facing print wrapper
 - `scripts/replay_sender.py`: low-level protocol sender
+- `scripts/raster_btbuf.py`: isolated btbuf/template raster handling
+- `scripts/encoder_backends.py`: isolated LZMA/aabb encoder backends
+- `scripts/protocol_frames.py`: isolated protocol frame/materialization logic
+- `scripts/rfcomm_transport.py`: isolated RFCOMM transport/send logging
 - `scripts/decode_spp.py`: decode outgoing SPP/BTSnoop captures
 - `scripts/decode_lzma_btbuf.py`: decode captured `aabb` payloads
 - `scripts/analyze_payloads.py`: compare and inspect payload behavior

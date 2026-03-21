@@ -13,7 +13,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
+from PIL import Image, ImageOps
+
+from image_input import get_raster_size_mm, get_svg_size_mm, load_image_any
 
 
 MAC_RE = re.compile(r"^([0-9A-F]{2}:){5}[0-9A-F]{2}$", re.IGNORECASE)
@@ -21,14 +23,15 @@ DEFAULT_CONFIG = {
     "printer": {
         "mac": "",
         "auto_discover": True,
+        "bt_preflight": False,
         "auto_scan_seconds": 4,
         "name_patterns": ["katasymbol", "t0"],
         "channel": 1,
         "channels": "1,2,3",
         "connect_timeout": 5.0,
         "recv_timeout": 0.2,
-        "timing_scale": 1.0,
-        "delay_ms": 20,
+        "timing_scale": 0.001,
+        "delay_ms": 30,
     },
     "template": {
         "dump_dir": "",
@@ -37,6 +40,9 @@ DEFAULT_CONFIG = {
     "image": {
         "threshold": 125,
         "prepare": True,
+        "autocontrast": True,
+        "crop_content": True,
+        "despeckle": False,
         "rotate": "auto",
         "fit_mode": "shrink",
         "dither": "auto",
@@ -47,8 +53,17 @@ DEFAULT_CONFIG = {
         "prepared_image_out": "",
     },
     "transfer": {
-        "post_frames_after_aa10": 12,
-        "lzma_encoder": "python",
+        "post_frames_after_aa10": 0,
+        "lzma_encoder": "java",
+        "compat_raster_preset": "decoded-template-bbox",
+        "long_label_svg_preset": False,
+        "long_label_bitmap_preset": False,
+        "bbox_fit_mode": "contain",
+        "bbox_align_x": "center",
+        "bbox_align_y": "center",
+        "bbox_inset_y": 4,
+        "bbox_offset_y": 0,
+        "raster_y_phase": 0,
         "scale_to_canvas_width": True,
         "use_template_nozero": True,
         "keep_template_aabb": False,
@@ -114,37 +129,62 @@ def cfg_get(cfg: dict[str, Any], dotted_key: str) -> Any:
     return cur
 
 
-def find_latest_template_dump(default_root: Path) -> Path | None:
-    # Pick dump dir that has decoded job payloads with at least one aabb file.
-    best: tuple[float, Path] | None = None
-    patt = str(default_root / "dumpstate-*" / "job_*" / "*_aabb_*.bin")
-    for p in glob.glob(patt):
-        fp = Path(p)
-        dump_dir = fp.parent.parent
-        try:
-            mtime = fp.stat().st_mtime
-        except OSError:
-            continue
-        if best is None or mtime > best[0]:
-            best = (mtime, dump_dir)
-    return best[1] if best else None
+def _list_template_candidates(default_root: Path) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for dump_dir in sorted(default_root.glob("dumpstate-*")):
+        for job_dir in sorted(dump_dir.glob("job_*")):
+            aabb_files = sorted(job_dir.glob("*_aabb_*.bin"))
+            if not aabb_files:
+                continue
+            job = int(job_dir.name.split("_")[-1])
+            geom = load_template_geometry(dump_dir, job)
+            try:
+                mtime = max(p.stat().st_mtime for p in aabb_files)
+            except OSError:
+                mtime = 0.0
+            out.append(
+                {
+                    "dump_dir": dump_dir,
+                    "job": job,
+                    "width": int(geom["width"]),
+                    "bytes_per_col": int(geom["bytes_per_col"]),
+                    "no_zero_index": int(geom["no_zero_index"]),
+                    "mtime": mtime,
+                }
+            )
+    return out
 
 
-def pick_template_job(dump_dir: Path, requested_job: int) -> int:
-    job_dirs = sorted(dump_dir.glob("job_*"))
-    if not job_dirs:
-        raise SystemExit(f"no job_* dirs in template dump: {dump_dir}")
-    with_aabb = []
-    for jd in job_dirs:
-        if list(jd.glob("*_aabb_*.bin")):
-            with_aabb.append(jd)
-    if not with_aabb:
-        raise SystemExit(f"no *_aabb_*.bin payloads in template dump: {dump_dir}")
-    max_job = max(int(jd.name.split("_")[-1]) for jd in with_aabb)
-    if requested_job > 0 and any(int(jd.name.split("_")[-1]) == requested_job for jd in with_aabb):
-        return requested_job
-    print(f"auto template job: {max_job}")
-    return max_job
+def find_auto_template(default_root: Path, prefer_long: bool) -> tuple[Path, int] | None:
+    candidates = _list_template_candidates(default_root)
+    if not candidates:
+        return None
+
+    def score(c: dict[str, Any]) -> tuple[int, int, float]:
+        width = int(c["width"])
+        nozero = int(c["no_zero_index"])
+        dump_name = str(c["dump_dir"].name).lower()
+        s = 0
+        if prefer_long:
+            if width == 289 and nozero == 23:
+                s += 100
+            if "inkscapetest" in dump_name:
+                s += 20
+            if width == 209 and nozero == 23:
+                s += 5
+        else:
+            if width == 209 and nozero == 23:
+                s += 100
+            if "ref_pattern" in dump_name:
+                s += 20
+            if width == 201 and nozero in (8, 23):
+                s += 5
+        if width == 332:
+            s -= 50
+        return (s, width, float(c["mtime"]))
+
+    best = max(candidates, key=score)
+    return Path(best["dump_dir"]), int(best["job"])
 
 
 def load_template_geometry(dump_dir: Path, template_job: int) -> dict:
@@ -202,10 +242,58 @@ def choose_rotation_auto(im: Image.Image, head_height: int) -> int:
     return 90
 
 
+def is_auto_long_label_bitmap_candidate(src_path: Path) -> bool:
+    if src_path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return False
+    size_mm = get_raster_size_mm(src_path)
+    if size_mm is None:
+        return False
+    width_mm, height_mm = size_mm
+    if height_mm <= 0:
+        return False
+    aspect = width_mm / height_mm
+    if aspect < 2.0:
+        return False
+    if not (10.0 <= height_mm <= 14.5):
+        return False
+    if width_mm < 24.0:
+        return False
+    return True
+
+
+def despeckle_bw(bw: Image.Image, min_neighbors: int = 2) -> Image.Image:
+    src = bw.convert("1")
+    w, h = src.size
+    in_px = src.load()
+    out = src.copy()
+    out_px = out.load()
+    for y in range(h):
+        for x in range(w):
+            if in_px[x, y] != 0:
+                continue
+            neighbors = 0
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    nx = x + dx
+                    ny = y + dy
+                    if nx < 0 or ny < 0 or nx >= w or ny >= h:
+                        continue
+                    if in_px[nx, ny] == 0:
+                        neighbors += 1
+            if neighbors < min_neighbors:
+                out_px[x, y] = 255
+    return out
+
+
 def prepare_image(
     src_path: Path,
     out_path: Path,
     head_height: int,
+    autocontrast: bool,
+    crop_content: bool,
+    despeckle: bool,
     rotate_mode: str,
     fit_mode: str,
     dither_mode: str,
@@ -214,7 +302,8 @@ def prepare_image(
     offset_x: int,
     offset_y: int,
 ) -> dict:
-    im0 = Image.open(src_path)
+    svg_ppmm = (head_height / 12.0) if head_height > 0 else 8.0
+    im0 = load_image_any(src_path, svg_pixels_per_mm=svg_ppmm)
     src_bw = is_strict_bw(im0)
     im = im0.convert("RGB")
 
@@ -228,6 +317,8 @@ def prepare_image(
 
     # grayscale workspace
     g = im.convert("L")
+    if autocontrast:
+        g = ImageOps.autocontrast(g)
 
     # vertical fit to print head
     if fit_mode == "shrink":
@@ -256,33 +347,53 @@ def prepare_image(
     else:
         raise SystemExit(f"unsupported dither mode: {mode}")
 
-    # final canvas: dynamic length (width), fixed head height
+    if despeckle:
+        bw = despeckle_bw(bw)
+
+    crop_bbox = None
+    if crop_content:
+        inv = ImageOps.invert(bw.convert("L"))
+        crop_bbox = inv.getbbox()
+        if crop_bbox is not None:
+            bw = bw.crop(crop_bbox)
+
+    # Do not force a full head-height canvas here. The sender performs the final
+    # 96-dot placement and scaling. Saving an already padded 96px-high image
+    # prevents the sender from widening small source images like the known-good
+    # 64x32 test pattern.
     content_w, content_h = bw.size
-    canvas_w = content_w + max(0, offset_x)
-    canvas_h = head_height
+    pad_left = max(0, offset_x)
+    pad_top = max(0, offset_y)
+    pad_bottom = max(0, -offset_y)
+    canvas_w = content_w + pad_left
+    canvas_h = content_h + pad_top + pad_bottom
     canvas = Image.new("1", (canvas_w, canvas_h), 1)  # white
+    canvas.paste(bw, (pad_left, pad_top))
 
-    if align == "center":
-        y = (canvas_h - content_h) // 2 + offset_y
-        x = offset_x
-    elif align == "top":
-        y = 0 + offset_y
-        x = offset_x
-    else:  # bottom
-        y = (canvas_h - content_h) + offset_y
-        x = offset_x
-    y = max(0, min(canvas_h - content_h, y))
-    x = max(0, x)
-    canvas.paste(bw, (x, y))
+    lossless_preferred = (src_path.suffix.lower() in (".svg", ".png")) or src_bw or (mode == "threshold")
 
-    # save as JPEG (requested), but from 8-bit for compatibility
+    if not out_path.suffix:
+        out_path = out_path.with_suffix(".png" if lossless_preferred else ".jpg")
+    elif lossless_preferred and out_path.suffix.lower() in (".jpg", ".jpeg"):
+        out_path = out_path.with_suffix(".png")
+
+    # Save line art and SVG-derived images losslessly to avoid JPEG artifacts.
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    canvas.convert("L").save(out_path, format="JPEG", quality=100, subsampling=0, optimize=False)
+    if out_path.suffix.lower() == ".png":
+        canvas.convert("L").save(out_path, format="PNG")
+    else:
+        canvas.convert("L").save(out_path, format="JPEG", quality=100, subsampling=0, optimize=False)
 
     return {
+        "prepared_image": str(out_path),
         "src_size": [im0.width, im0.height],
+        "src_size_mm": list(get_svg_size_mm(src_path)) if src_path.suffix.lower() == ".svg" and get_svg_size_mm(src_path) else None,
         "src_bw": src_bw,
         "rotation": rot,
+        "autocontrast": autocontrast,
+        "crop_content": crop_content,
+        "despeckle": despeckle,
+        "crop_bbox": list(crop_bbox) if crop_bbox is not None else None,
         "prepared_size": [canvas.width, canvas.height],
         "content_size": [content_w, content_h],
         "dither_used": mode,
@@ -405,90 +516,183 @@ def discover_printer_mac(cfg: dict[str, Any], cli_patterns: list[str]) -> tuple[
 
 def main() -> None:
     ap = argparse.ArgumentParser(
-        description="Katasymbol print CLI with image preprocessing, config defaults and Bluetooth auto-discovery."
+        description="Katasymbol print CLI with image preprocessing, known-good defaults and Bluetooth auto-discovery.",
+        epilog=(
+            "Typical use:\n"
+            "  sudo python3 scripts/katasymbol_print.py image.png\n"
+            "Slow diagnostic dry-run:\n"
+            "  python3 scripts/katasymbol_print.py image.png --slow --dry-run"
+        ),
+        formatter_class=argparse.RawTextHelpFormatter,
     )
-    ap.add_argument("image", help="Input image file (PNG/JPG)")
-    ap.add_argument("--config", default="", help="Path to config JSON (default: .katasymbol_print.json)")
-    ap.add_argument("--init-config", action="store_true", help="Create default config if missing and exit")
-    ap.add_argument("--print-config", action="store_true", help="Print effective config and exit")
-    ap.add_argument("--mac", default="", help="Printer MAC address (optional with auto-discovery)")
-    ap.add_argument(
-        "--printer-name-pattern",
-        action="append",
-        default=[],
-        help="Additional case-insensitive substring used for auto-discovery (repeatable)",
-    )
-    ap.add_argument(
-        "--no-bt-preflight",
+    ap.add_argument("image", help="Input image file (PNG/JPG/SVG)")
+
+    basic = ap.add_argument_group("Basic Workflow")
+    basic.add_argument("--mac", default="", help="Printer MAC address (optional with auto-discovery)")
+    basic.add_argument("--dry-run", action="store_true", help="Build payload/artifacts only, do not send")
+    basic.add_argument(
+        "--prepare-only",
         action="store_true",
-        help="Disable Bluetooth preflight (power on / scan / l2ping wakeup)",
+        help="Run image preprocessing only, write prepared image + metadata, then exit",
     )
-    ap.add_argument("--no-auto-discover", action="store_true", help="Disable Bluetooth printer auto-discovery")
-    ap.add_argument(
-        "--template-dump-dir",
-        default="",
-        help="Template dump directory with summary.json/messages.csv/job_XXX (default: auto-latest)",
-    )
-    ap.add_argument("--template-job", type=int, default=None, help="Template job index (1-based)")
-    ap.add_argument("--out-dir", default="", help="Output directory for logs/artifacts")
-    ap.add_argument("--channel", type=int, default=None, help="Preferred RFCOMM channel")
-    ap.add_argument("--channels", default="", help="Fallback channel list")
-    ap.add_argument("--threshold", type=int, default=None, help="Binarization threshold")
-    ap.add_argument("--connect-timeout", type=float, default=None)
-    ap.add_argument("--recv-timeout", type=float, default=None)
-    ap.add_argument("--timing-scale", type=float, default=None)
-    ap.add_argument("--delay-ms", type=int, default=None)
-    ap.add_argument("--post-frames-after-aa10", type=int, default=None)
-    ap.add_argument("--lzma-encoder", choices=["python", "xz"], default="")
-    ap.add_argument(
-        "--no-scale-to-canvas-width",
+    basic.add_argument(
+        "--safe",
         action="store_true",
-        help="Disable scaling image to full template width",
+        help="Deprecated alias for the conservative default transport mode",
     )
-    ap.add_argument(
-        "--no-use-template-nozero",
+    basic.add_argument(
+        "--slow",
         action="store_true",
-        help="Disable forcing template no_zero_index behavior",
+        help="Fallback timing mode using original template pacing",
     )
-    ap.add_argument("--dry-run", action="store_true", help="Build payload/artifacts only, do not send")
-    ap.add_argument(
-        "--keep-template-aabb",
+    basic.add_argument(
+        "--aggressive",
         action="store_true",
-        help="Diagnostic mode: send captured template aabb instead of generated image payload",
+        help="Riskier transport mode with extra post-trigger frames and shorter inter-frame delay",
     )
-    # Preprocessing controls
-    ap.add_argument("--no-prepare", action="store_true", help="Disable preprocessing pipeline")
-    ap.add_argument(
+    basic.add_argument(
+        "--long-label-svg",
+        action="store_true",
+        help="Use the known-good long SVG label preset based on InkscapeTest2/job_002",
+    )
+    basic.add_argument(
+        "--long-label-bitmap",
+        action="store_true",
+        help="Use the current best long bitmap label preset based on InkscapeTest2/job_002",
+    )
+
+    image_group = ap.add_argument_group("Image Preparation")
+    image_group.add_argument("--no-prepare", action="store_true", help="Disable preprocessing pipeline")
+    image_group.add_argument("--autocontrast", action="store_true", help="Enable grayscale autocontrast before binarization")
+    image_group.add_argument("--no-autocontrast", action="store_true", help="Disable grayscale autocontrast before binarization")
+    image_group.add_argument("--crop-content", action="store_true", help="Crop white margins during preprocessing")
+    image_group.add_argument("--no-crop-content", action="store_true", help="Keep original white margins during preprocessing")
+    image_group.add_argument("--despeckle", action="store_true", help="Remove isolated black speckles after binarization")
+    image_group.add_argument("--no-despeckle", action="store_true", help="Disable removal of isolated black speckles after binarization")
+    image_group.add_argument(
         "--rotate",
         default="",
         choices=["", "auto", "0", "90", "180", "270"],
         help="Rotation before scaling",
     )
-    ap.add_argument(
+    image_group.add_argument(
         "--fit-mode",
         default="",
         choices=["", "shrink", "fit", "stretch"],
         help="How to adapt image to fixed print-head height",
     )
-    ap.add_argument(
+    image_group.add_argument(
         "--dither",
         default="",
         choices=["", "auto", "threshold", "floyd", "ordered"],
         help="B/W conversion mode (auto: threshold for strict BW, Floyd for gray/color)",
     )
-    ap.add_argument("--align", default="", choices=["", "center", "top", "bottom"], help="Vertical alignment")
-    ap.add_argument("--offset-x", type=int, default=None, help="Horizontal offset in pixels (adds white left padding)")
-    ap.add_argument("--offset-y", type=int, default=None, help="Vertical offset in pixels")
-    ap.add_argument(
+    image_group.add_argument("--align", default="", choices=["", "center", "top", "bottom"], help="Vertical alignment")
+    image_group.add_argument("--offset-x", type=int, default=None, help="Horizontal offset in pixels (adds white left padding)")
+    image_group.add_argument("--offset-y", type=int, default=None, help="Vertical offset in pixels")
+    image_group.add_argument(
         "--head-height",
         type=int,
         default=None,
         help="Fixed print-head height in pixels (0: infer from template)",
     )
-    ap.add_argument(
+    image_group.add_argument(
         "--prepared-image-out",
         default="",
         help="Optional explicit path for prepared JPEG (default: out/prepared_images/<timestamp>.jpg)",
+    )
+
+    connection = ap.add_argument_group("Connection And Template")
+    connection.add_argument("--config", default="", help="Path to config JSON (default: .katasymbol_print.json)")
+    connection.add_argument("--init-config", action="store_true", help="Create default config if missing and exit")
+    connection.add_argument("--print-config", action="store_true", help="Print effective config and exit")
+    connection.add_argument(
+        "--printer-name-pattern",
+        action="append",
+        default=[],
+        help="Additional case-insensitive substring used for auto-discovery (repeatable)",
+    )
+    connection.add_argument(
+        "--bt-preflight",
+        action="store_true",
+        help="Enable Bluetooth preflight (power on / scan / l2ping wakeup)",
+    )
+    connection.add_argument(
+        "--no-bt-preflight",
+        action="store_true",
+        help="Deprecated alias for disabling Bluetooth preflight",
+    )
+    connection.add_argument("--no-auto-discover", action="store_true", help="Disable Bluetooth printer auto-discovery")
+    connection.add_argument(
+        "--template-dump-dir",
+        default="",
+        help="Template dump directory with summary.json/messages.csv/job_XXX (default: auto-latest)",
+    )
+    connection.add_argument("--template-job", type=int, default=None, help="Template job index (1-based)")
+    connection.add_argument("--out-dir", default="", help="Output directory for logs/artifacts")
+    connection.add_argument("--channel", type=int, default=None, help="Preferred RFCOMM channel")
+    connection.add_argument("--channels", default="", help="Fallback channel list")
+
+    advanced = ap.add_argument_group("Advanced Transfer")
+    advanced.add_argument("--threshold", type=int, default=None, help="Binarization threshold")
+    advanced.add_argument("--connect-timeout", type=float, default=None)
+    advanced.add_argument("--recv-timeout", type=float, default=None)
+    advanced.add_argument("--timing-scale", type=float, default=None)
+    advanced.add_argument("--delay-ms", type=int, default=None)
+    advanced.add_argument("--post-frames-after-aa10", type=int, default=None)
+    advanced.add_argument("--lzma-encoder", choices=["python", "xz", "java"], default="")
+
+    experimental = ap.add_argument_group("Experimental / Reverse Engineering")
+    experimental.add_argument("--canvas-width", type=int, default=None, help="Override btbuf width before trimming")
+    experimental.add_argument("--force-no-zero-index", type=int, default=None, help="Override btbuf trim start / btbuf[12]")
+    experimental.add_argument("--scale-width-bias", type=int, default=0, help="Adjust width after aspect-ratio scaling to head height")
+    experimental.add_argument("--scale-resample", choices=["lanczos", "nearest"], default="lanczos", help="Resampling kernel used during sender-side scaling")
+    experimental.add_argument(
+        "--bbox-fit-mode",
+        choices=["", "contain", "cover", "stretch"],
+        default="",
+        help="How decoded-template/template overlay presets fit content into the template bbox",
+    )
+    experimental.add_argument("--bbox-align-x", choices=["", "left", "center", "right"], default="", help="Horizontal placement inside template bbox")
+    experimental.add_argument("--bbox-align-y", choices=["", "top", "center", "bottom"], default="", help="Vertical placement inside template bbox")
+    experimental.add_argument(
+        "--bbox-inset-y",
+        type=int,
+        default=None,
+        help="Vertical safety inset in pixels for template-bbox presets",
+    )
+    experimental.add_argument(
+        "--bbox-offset-y",
+        type=int,
+        default=None,
+        help="Vertical placement offset in pixels for template-bbox presets (positive moves down)",
+    )
+    experimental.add_argument(
+        "--raster-y-phase",
+        type=int,
+        default=None,
+        help="Cyclic vertical phase shift applied during raster packing",
+    )
+    experimental.add_argument(
+        "--compat-raster-preset",
+        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289"],
+        default="",
+        help="Raster compatibility preset for known test cases",
+    )
+    experimental.add_argument(
+        "--no-scale-to-canvas-width",
+        action="store_true",
+        help="Disable scaling image to full template width",
+    )
+    experimental.add_argument(
+        "--no-use-template-nozero",
+        action="store_true",
+        help="Disable forcing template no_zero_index behavior",
+    )
+    experimental.add_argument(
+        "--keep-template-aabb",
+        action="store_true",
+        help="Diagnostic mode: send captured template aabb instead of generated image payload",
     )
     args = ap.parse_args()
 
@@ -511,6 +715,17 @@ def main() -> None:
     channel = args.channel if args.channel is not None else int(cfg_get(cfg, "printer.channel"))
     channels = args.channels or str(cfg_get(cfg, "printer.channels"))
     threshold = args.threshold if args.threshold is not None else int(cfg_get(cfg, "image.threshold"))
+    canvas_width = args.canvas_width
+    force_no_zero_index = args.force_no_zero_index
+    scale_width_bias = args.scale_width_bias
+    scale_resample = args.scale_resample
+    compat_raster_preset = args.compat_raster_preset or str(cfg_get(cfg, "transfer.compat_raster_preset"))
+    bbox_fit_mode = args.bbox_fit_mode or str(cfg_get(cfg, "transfer.bbox_fit_mode"))
+    bbox_align_x = args.bbox_align_x or str(cfg_get(cfg, "transfer.bbox_align_x"))
+    bbox_align_y = args.bbox_align_y or str(cfg_get(cfg, "transfer.bbox_align_y"))
+    bbox_inset_y = args.bbox_inset_y if args.bbox_inset_y is not None else int(cfg_get(cfg, "transfer.bbox_inset_y"))
+    bbox_offset_y = args.bbox_offset_y if args.bbox_offset_y is not None else int(cfg_get(cfg, "transfer.bbox_offset_y"))
+    raster_y_phase = args.raster_y_phase if args.raster_y_phase is not None else int(cfg_get(cfg, "transfer.raster_y_phase"))
     connect_timeout = args.connect_timeout if args.connect_timeout is not None else float(cfg_get(cfg, "printer.connect_timeout"))
     recv_timeout = args.recv_timeout if args.recv_timeout is not None else float(cfg_get(cfg, "printer.recv_timeout"))
     timing_scale = args.timing_scale if args.timing_scale is not None else float(cfg_get(cfg, "printer.timing_scale"))
@@ -528,6 +743,21 @@ def main() -> None:
     align = args.align or str(cfg_get(cfg, "image.align"))
     offset_x = args.offset_x if args.offset_x is not None else int(cfg_get(cfg, "image.offset_x"))
     offset_y = args.offset_y if args.offset_y is not None else int(cfg_get(cfg, "image.offset_y"))
+    autocontrast = bool(cfg_get(cfg, "image.autocontrast"))
+    if args.autocontrast:
+        autocontrast = True
+    if args.no_autocontrast:
+        autocontrast = False
+    crop_content = bool(cfg_get(cfg, "image.crop_content"))
+    if args.crop_content:
+        crop_content = True
+    if args.no_crop_content:
+        crop_content = False
+    despeckle = bool(cfg_get(cfg, "image.despeckle"))
+    if args.despeckle:
+        despeckle = True
+    if args.no_despeckle:
+        despeckle = False
     head_height_cfg = int(cfg_get(cfg, "image.head_height"))
     head_height = args.head_height if args.head_height is not None else head_height_cfg
     prepared_image_out_cfg = str(cfg_get(cfg, "image.prepared_image_out")).strip()
@@ -536,8 +766,67 @@ def main() -> None:
     scale_to_canvas_width = bool(cfg_get(cfg, "transfer.scale_to_canvas_width")) and (not args.no_scale_to_canvas_width)
     use_template_nozero = bool(cfg_get(cfg, "transfer.use_template_nozero")) and (not args.no_use_template_nozero)
     keep_template_aabb = bool(cfg_get(cfg, "transfer.keep_template_aabb")) or args.keep_template_aabb
+    long_label_svg = bool(cfg_get(cfg, "transfer.long_label_svg_preset")) or args.long_label_svg
+    long_label_bitmap = bool(cfg_get(cfg, "transfer.long_label_bitmap_preset")) or args.long_label_bitmap
+    explicit_long_label_controls = bool(
+        args.long_label_svg
+        or args.long_label_bitmap
+        or args.template_dump_dir
+        or args.template_job is not None
+        or args.compat_raster_preset
+        or args.bbox_fit_mode
+        or args.bbox_align_x
+        or args.bbox_align_y
+        or args.bbox_inset_y is not None
+        or args.bbox_offset_y is not None
+        or args.raster_y_phase is not None
+    )
     prepare_enabled = bool(cfg_get(cfg, "image.prepare")) and (not args.no_prepare)
     auto_discover_enabled = bool(cfg_get(cfg, "printer.auto_discover")) and (not args.no_auto_discover)
+    bt_preflight_enabled = bool(cfg_get(cfg, "printer.bt_preflight"))
+    if args.bt_preflight:
+        bt_preflight_enabled = True
+    if args.no_bt_preflight:
+        bt_preflight_enabled = False
+
+    if args.slow:
+        timing_scale = 1.0
+    if args.aggressive:
+        if post_frames_after_aa10 <= 0:
+            post_frames_after_aa10 = 12
+        if delay_ms >= 30:
+            delay_ms = 20
+
+    if (not explicit_long_label_controls) and (not long_label_svg) and (not long_label_bitmap):
+        if is_auto_long_label_bitmap_candidate(Path(args.image)):
+            long_label_bitmap = True
+            print("auto long-label bitmap preset")
+
+    if long_label_svg:
+        template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
+        template_dump_arg = template_dump_cfg
+        template_job = 2
+        compat_raster_preset = "long-label-svg-289"
+        bbox_fit_mode = "stretch"
+        bbox_align_x = "left"
+        bbox_align_y = "top"
+        bbox_inset_y = 0
+        bbox_offset_y = 0
+        raster_y_phase = 15
+
+    if long_label_bitmap:
+        template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
+        template_dump_arg = template_dump_cfg
+        template_job = 2
+        compat_raster_preset = "long-label-svg-289"
+        bbox_fit_mode = "stretch"
+        bbox_align_x = "left"
+        bbox_align_y = "top"
+        bbox_inset_y = 1
+        bbox_offset_y = 0
+        raster_y_phase = 15
+        dither = "threshold"
+        threshold = 230
 
     auto_mode = False
     if template_dump_arg:
@@ -545,17 +834,15 @@ def main() -> None:
     elif template_dump_cfg:
         template_dump_dir = Path(template_dump_cfg)
     else:
-        auto = find_latest_template_dump(Path("out/decode"))
+        auto = find_auto_template(Path("out/decode"), prefer_long=long_label_bitmap or long_label_svg)
         if auto is None:
             raise SystemExit("no template dump found in out/decode (run decode_spp.py first)")
-        template_dump_dir = auto
-        auto_mode = True
+        template_dump_dir, template_job = auto
         print(f"auto template dump: {template_dump_dir}")
+        print(f"auto template job: {template_job}")
+        auto_mode = True
     if not template_dump_dir.exists():
         raise SystemExit(f"template dump dir not found: {template_dump_dir}")
-
-    if auto_mode:
-        template_job = pick_template_job(template_dump_dir, template_job)
 
     geom = load_template_geometry(template_dump_dir, template_job)
     if head_height is None or head_height <= 0:
@@ -568,11 +855,16 @@ def main() -> None:
             prep_out = Path(prepared_image_out)
         else:
             ts = time.strftime("%Y%m%d-%H%M%S")
-            prep_out = Path("out/prepared_images") / f"prepared_{ts}.jpg"
+            src_suffix = Path(args.image).suffix.lower()
+            prep_ext = ".png" if src_suffix in (".svg", ".png") else ".jpg"
+            prep_out = Path("out/prepared_images") / f"prepared_{ts}{prep_ext}"
         prep_meta = prepare_image(
             src_path=Path(args.image),
             out_path=prep_out,
             head_height=head_height,
+            autocontrast=autocontrast,
+            crop_content=crop_content,
+            despeckle=despeckle,
             rotate_mode=rotate,
             fit_mode=fit_mode,
             dither_mode=dither,
@@ -581,8 +873,18 @@ def main() -> None:
             offset_x=offset_x,
             offset_y=offset_y,
         )
-        image_for_sender = prep_out
+        image_for_sender = Path(prep_meta["prepared_image"])
         print(f"prepared image: {image_for_sender}")
+    elif args.prepare_only:
+        raise SystemExit("--prepare-only requires preprocessing (do not combine with --no-prepare)")
+
+    if args.prepare_only:
+        if prep_meta is not None:
+            meta_out = Path(out_dir) / "_last_prepare_meta.json"
+            meta_out.parent.mkdir(parents=True, exist_ok=True)
+            meta_out.write_text(json.dumps(prep_meta, indent=2))
+            print(f"prepare meta: {meta_out}")
+        return
 
     mac = args.mac.strip().upper()
     if not mac:
@@ -597,7 +899,7 @@ def main() -> None:
             print(f"auto printer: {dev_name} ({mac})")
         else:
             raise SystemExit("--mac required with --send (auto-discovery disabled)")
-    if mac and (not args.dry_run) and (not args.no_bt_preflight):
+    if mac and (not args.dry_run) and bt_preflight_enabled:
         bluetooth_preflight(mac, int(cfg_get(cfg, "printer.auto_scan_seconds")))
 
     if not args.dry_run and os.geteuid() != 0:
@@ -634,6 +936,28 @@ def main() -> None:
         "--lzma-encoder",
         lzma_encoder,
     ]
+    if canvas_width is not None:
+        cmd.extend(["--canvas-width", str(canvas_width)])
+    if force_no_zero_index is not None:
+        cmd.extend(["--force-no-zero-index", str(force_no_zero_index)])
+    if scale_width_bias:
+        cmd.extend(["--scale-width-bias", str(scale_width_bias)])
+    if scale_resample != "lanczos":
+        cmd.extend(["--scale-resample", scale_resample])
+    if compat_raster_preset:
+        cmd.extend(["--compat-raster-preset", compat_raster_preset])
+    if bbox_fit_mode and bbox_fit_mode != "contain":
+        cmd.extend(["--bbox-fit-mode", bbox_fit_mode])
+    if bbox_align_x and bbox_align_x != "center":
+        cmd.extend(["--bbox-align-x", bbox_align_x])
+    if bbox_align_y and bbox_align_y != "center":
+        cmd.extend(["--bbox-align-y", bbox_align_y])
+    if bbox_inset_y:
+        cmd.extend(["--bbox-inset-y", str(bbox_inset_y)])
+    if bbox_offset_y:
+        cmd.extend(["--bbox-offset-y", str(bbox_offset_y)])
+    if raster_y_phase:
+        cmd.extend(["--raster-y-phase", str(raster_y_phase)])
     if mac:
         cmd.extend(["--mac", mac])
     if scale_to_canvas_width:

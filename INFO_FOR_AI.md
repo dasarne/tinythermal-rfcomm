@@ -15,6 +15,26 @@ Goal: make printing work reliably from Linux with minimal friction, while preser
   - build year 2025
 - Do not assume cross-model compatibility without capture-based verification.
 
+## Current Practical Baselines
+
+- Short/default path:
+  - `sudo python3 scripts/katasymbol_print.py <image>`
+  - verified working
+- Long bitmap path:
+  - `sudo python3 scripts/katasymbol_print.py <image>.png`
+  - suitable wide bitmap inputs now auto-select the long bitmap path
+  - `--long-label-bitmap` remains available as an explicit override
+  - currently the best known long-label path
+  - visually very close to the vendor app
+- Long SVG path:
+  - `sudo python3 scripts/katasymbol_print.py <image>.svg --long-label-svg`
+  - useful for research, but still less accurate than the bitmap path
+
+Known remaining visual deviation on the long bitmap path:
+
+- no dominant remaining issue in the validated `Inkscape-Test.png` case
+- if future edge cases differ, compare at the bitmap/raster stage first, not at transport
+
 ## Trust Levels (Important)
 
 Use these labels when changing behavior:

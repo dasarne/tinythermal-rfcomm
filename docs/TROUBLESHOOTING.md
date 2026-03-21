@@ -104,6 +104,33 @@ Until firmware behavior is fully characterized:
 2. Use conservative pacing (`--delay-ms 30` or higher).
 3. Keep post-trigger frames low (default already limited).
 4. Prefer known-good template and image during debugging.
+5. If the fast default path misbehaves, retry with slower original pacing:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image> --slow
+   ```
+6. If the printer is asleep or Bluetooth is flaky, retry with explicit wakeup/preflight:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image> --bt-preflight
+   ```
+7. Prefer the Java LZMA backend unless you are intentionally comparing encoders:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image> --lzma-encoder java
+   ```
+8. For long physical SVG labels, prefer the dedicated preset:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image>.svg --long-label-svg
+   ```
+9. For long bitmap labels where the bitmap itself is the reference, the normal command now auto-selects the long bitmap path for suitable inputs:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image>.png
+   ```
+   If you need to force that path explicitly:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image>.png --long-label-bitmap
+   ```
+10. The wrapper default raster preset is already the current known-good path; do not override it unless you are debugging protocol/raster behavior.
+11. The wrapper now crops white margins during preprocessing by default. Use `--no-crop-content` only if that crop is undesirable for a specific image.
+12. `--despeckle` is intentionally optional. It can remove isolated dots, but it may also alter thin artwork more than desired.
 
 ## Useful Files for Bug Reports
 
