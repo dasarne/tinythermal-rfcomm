@@ -99,6 +99,12 @@ def main() -> None:
         help="cyclic vertical phase shift applied during raster packing",
     )
     ap.add_argument(
+        "--svg-pixels-per-mm",
+        type=float,
+        default=8.0,
+        help="SVG rasterization density in pixels/mm before sender-side placement",
+    )
+    ap.add_argument(
         "--scale-to-canvas-width",
         action="store_true",
         help="scale input image to full canvas width before vertical fit",
@@ -150,6 +156,7 @@ def main() -> None:
         args.threshold,
         canvas_width,
         bpc,
+        svg_pixels_per_mm=args.svg_pixels_per_mm,
         scale_to_canvas_width=args.scale_to_canvas_width,
         force_no_zero_index=force_no_zero_index,
         scale_width_bias=args.scale_width_bias,

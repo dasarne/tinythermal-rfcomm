@@ -40,6 +40,7 @@ DEFAULT_CONFIG = {
     "image": {
         "threshold": 125,
         "prepare": True,
+        "svg_pixels_per_mm": 8.0,
         "autocontrast": True,
         "crop_content": True,
         "despeckle": False,
@@ -242,13 +243,10 @@ def choose_rotation_auto(im: Image.Image, head_height: int) -> int:
     return 90
 
 
-def is_auto_long_label_bitmap_candidate(src_path: Path) -> bool:
-    if src_path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
-        return False
-    size_mm = get_raster_size_mm(src_path)
-    if size_mm is None:
-        return False
-    width_mm, height_mm = size_mm
+def is_auto_long_label_size_mm_candidate(width_mm: float, height_mm: float) -> bool:
+    # Conservative heuristic for the currently validated physical long-label case.
+    # Keep this size-based so both raster inputs (via DPI) and SVG inputs (via mm)
+    # can share the same everyday auto-selection path.
     if height_mm <= 0:
         return False
     aspect = width_mm / height_mm
@@ -259,6 +257,24 @@ def is_auto_long_label_bitmap_candidate(src_path: Path) -> bool:
     if width_mm < 24.0:
         return False
     return True
+
+
+def is_auto_long_label_bitmap_candidate(src_path: Path) -> bool:
+    if src_path.suffix.lower() not in (".png", ".jpg", ".jpeg"):
+        return False
+    size_mm = get_raster_size_mm(src_path)
+    if size_mm is None:
+        return False
+    return is_auto_long_label_size_mm_candidate(*size_mm)
+
+
+def is_auto_long_label_svg_candidate(src_path: Path) -> bool:
+    if src_path.suffix.lower() != ".svg":
+        return False
+    size_mm = get_svg_size_mm(src_path)
+    if size_mm is None:
+        return False
+    return is_auto_long_label_size_mm_candidate(*size_mm)
 
 
 def despeckle_bw(bw: Image.Image, min_neighbors: int = 2) -> Image.Image:
@@ -291,6 +307,7 @@ def prepare_image(
     src_path: Path,
     out_path: Path,
     head_height: int,
+    svg_pixels_per_mm: float,
     autocontrast: bool,
     crop_content: bool,
     despeckle: bool,
@@ -302,8 +319,7 @@ def prepare_image(
     offset_x: int,
     offset_y: int,
 ) -> dict:
-    svg_ppmm = (head_height / 12.0) if head_height > 0 else 8.0
-    im0 = load_image_any(src_path, svg_pixels_per_mm=svg_ppmm)
+    im0 = load_image_any(src_path, svg_pixels_per_mm=svg_pixels_per_mm)
     src_bw = is_strict_bw(im0)
     im = im0.convert("RGB")
 
@@ -402,6 +418,7 @@ def prepare_image(
         "offset_x": offset_x,
         "offset_y": offset_y,
         "head_height": head_height,
+        "svg_pixels_per_mm": svg_pixels_per_mm,
     }
 
 
@@ -553,7 +570,7 @@ def main() -> None:
     basic.add_argument(
         "--long-label-svg",
         action="store_true",
-        help="Use the known-good long SVG label preset based on InkscapeTest2/job_002",
+        help="Force the validated long SVG label preset based on InkscapeTest2/job_002",
     )
     basic.add_argument(
         "--long-label-bitmap",
@@ -600,6 +617,12 @@ def main() -> None:
         "--prepared-image-out",
         default="",
         help="Optional explicit path for prepared JPEG (default: out/prepared_images/<timestamp>.jpg)",
+    )
+    image_group.add_argument(
+        "--svg-pixels-per-mm",
+        type=float,
+        default=None,
+        help="SVG rasterization density in pixels/mm before preprocessing/sender placement",
     )
 
     connection = ap.add_argument_group("Connection And Template")
@@ -760,6 +783,9 @@ def main() -> None:
         despeckle = False
     head_height_cfg = int(cfg_get(cfg, "image.head_height"))
     head_height = args.head_height if args.head_height is not None else head_height_cfg
+    svg_pixels_per_mm = (
+        args.svg_pixels_per_mm if args.svg_pixels_per_mm is not None else float(cfg_get(cfg, "image.svg_pixels_per_mm"))
+    )
     prepared_image_out_cfg = str(cfg_get(cfg, "image.prepared_image_out")).strip()
     prepared_image_out = args.prepared_image_out.strip() or prepared_image_out_cfg
 
@@ -798,9 +824,13 @@ def main() -> None:
             delay_ms = 20
 
     if (not explicit_long_label_controls) and (not long_label_svg) and (not long_label_bitmap):
-        if is_auto_long_label_bitmap_candidate(Path(args.image)):
+        src_path = Path(args.image)
+        if is_auto_long_label_bitmap_candidate(src_path):
             long_label_bitmap = True
             print("auto long-label bitmap preset")
+        elif is_auto_long_label_svg_candidate(src_path):
+            long_label_svg = True
+            print("auto long-label svg preset")
 
     if long_label_svg:
         template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
@@ -810,9 +840,12 @@ def main() -> None:
         bbox_fit_mode = "stretch"
         bbox_align_x = "left"
         bbox_align_y = "top"
-        bbox_inset_y = 0
+        bbox_inset_y = 1
         bbox_offset_y = 0
         raster_y_phase = 15
+        dither = "threshold"
+        threshold = 230
+        svg_pixels_per_mm = 12.0
 
     if long_label_bitmap:
         template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
@@ -862,6 +895,7 @@ def main() -> None:
             src_path=Path(args.image),
             out_path=prep_out,
             head_height=head_height,
+            svg_pixels_per_mm=svg_pixels_per_mm,
             autocontrast=autocontrast,
             crop_content=crop_content,
             despeckle=despeckle,
@@ -935,6 +969,8 @@ def main() -> None:
         str(post_frames_after_aa10),
         "--lzma-encoder",
         lzma_encoder,
+        "--svg-pixels-per-mm",
+        str(svg_pixels_per_mm),
     ]
     if canvas_width is not None:
         cmd.extend(["--canvas-width", str(canvas_width)])

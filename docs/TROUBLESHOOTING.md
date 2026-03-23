@@ -116,7 +116,11 @@ Until firmware behavior is fully characterized:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image> --lzma-encoder java
    ```
-8. For long physical SVG labels, prefer the dedicated preset:
+8. For long physical SVG labels, the normal command now auto-selects the validated long SVG path for suitable inputs:
+   ```bash
+   sudo python3 scripts/katasymbol_print.py <image>.svg
+   ```
+   If you need to force that path explicitly:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image>.svg --long-label-svg
    ```

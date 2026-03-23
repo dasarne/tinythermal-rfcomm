@@ -92,13 +92,14 @@ Current strengths:
 - documented protocol context
 - now a stable encoder reference path
 - named user-facing presets for known-good paths
+- dedicated frontend comparison scripts for SVG-vs-bitmap analysis
 
 Current risks:
 
 - large scripts become a merge-conflict magnet
 - behavior changes are hard to localize
 - more compatibility flags will make the default path harder to reason about
-- frontend-specific presets (`SVG` vs. bitmap) can blur whether a problem belongs to rasterization or transport
+- frontend-specific presets (`SVG` vs. bitmap) can blur whether a problem belongs to rasterization or transport, even though the validated long-label reference case now converges
 
 ## Green-Field Architecture
 
@@ -212,3 +213,19 @@ The best next architectural step is incremental:
 - reduce script size
 - strengthen boundaries
 - preserve regression visibility
+
+## Practical Note For AI-Friendly Maintenance
+
+For this repository, "good architecture" is not only smaller modules. It also means preserving explicit comparison paths so future human or AI maintainers can answer:
+
+- is this a frontend rasterization problem?
+- is this a btbuf/layout problem?
+- is this a transport/protocol problem?
+
+The current SVG work established a useful pattern:
+
+- compare SVG raster to bitmap reference before binarization
+- compare prepared 1-bit images before sender placement
+- compare generated `btbuf` artifacts before live printing
+
+Those checkpoints should be preserved even if code is refactored into cleaner modules later.

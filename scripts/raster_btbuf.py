@@ -229,6 +229,7 @@ def image_to_btbuf_with_canvas(
     threshold: int,
     canvas_width: int,
     bytes_per_col: int,
+    svg_pixels_per_mm: float,
     scale_to_canvas_width: bool,
     force_no_zero_index: int,
     scale_width_bias: int,
@@ -243,7 +244,7 @@ def image_to_btbuf_with_canvas(
     template_btbuf: Optional[bytes],
     template_layout: Optional[Dict[str, int]],
 ) -> Tuple[bytes, Dict[str, int]]:
-    img = load_image_any(img_path, svg_pixels_per_mm=(bytes_per_col * 8) / 12.0).convert("L")
+    img = load_image_any(img_path, svg_pixels_per_mm=svg_pixels_per_mm).convert("L")
     h_target = bytes_per_col * 8
     resample = Image.Resampling.NEAREST if scale_resample == "nearest" else Image.Resampling.LANCZOS
 

@@ -27,12 +27,23 @@ Goal: make printing work reliably from Linux with minimal friction, while preser
   - currently the best known long-label path
   - visually very close to the vendor app
 - Long SVG path:
-  - `sudo python3 scripts/katasymbol_print.py <image>.svg --long-label-svg`
-  - useful for research, but still less accurate than the bitmap path
+  - `sudo python3 scripts/katasymbol_print.py <image>.svg`
+  - suitable wide SVG inputs now auto-select the validated long SVG path
+  - `--long-label-svg` remains available as an explicit override
+  - validated on `Inkscape-Test.svg` against both dry-run artifacts and physical print comparison
+  - for the validated reference case, SVG and bitmap converge to identical `btbuf` output
 
-Known remaining visual deviation on the long bitmap path:
+Validated long-label SVG frontend settings for the current reference case:
 
-- no dominant remaining issue in the validated `Inkscape-Test.png` case
+- renderer: `rsvg-convert`
+- `svg_pixels_per_mm = 12.0`
+- `dither = threshold`
+- `threshold = 230`
+- `bbox_inset_y = 1`
+
+Known remaining visual deviation on the validated long-label reference path:
+
+- no dominant remaining issue in the validated `Inkscape-Test.png` / `Inkscape-Test.svg` case
 - if future edge cases differ, compare at the bitmap/raster stage first, not at transport
 
 ## Trust Levels (Important)
@@ -63,6 +74,10 @@ Current examples:
   - decodes `aabb` back to `btbuf`/renderings for analysis
 - `scripts/analyze_payloads.py`
   - comparison and reporting utilities
+- `scripts/compare_svg_bitmap_frontend.py`
+  - compare SVG rasterization against a bitmap reference before binarization
+- `scripts/sweep_svg_postprocess.py`
+  - sweep SVG frontend postprocessing against a bitmap reference
 
 ## Operational Realities
 
@@ -115,4 +130,5 @@ Recommendation for this repo:
 2. Read `docs/PROTOCOL.md` for on-wire behavior.
 3. Read `docs/TROUBLESHOOTING.md` for known failure modes.
 4. Inspect latest `out/replay_sender/<timestamp>/meta.json` and `send_log.json` examples (if available).
-5. Only then modify `scripts/replay_sender.py` or transport timings.
+5. If the question is SVG-vs-bitmap quality, inspect `out/svg_frontend_compare/` and `out/svg_postprocess_sweep/` before touching transport.
+6. Only then modify `scripts/replay_sender.py` or transport timings.

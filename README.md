@@ -31,7 +31,8 @@ This repository is intentionally context-rich so future maintainers (human or AI
 - Protocol path is reverse-engineered from real captures.
 - Default short-label path is stable for everyday printing.
 - Long bitmap labels can now be reproduced essentially at vendor quality.
-- Suitable long bitmap inputs are auto-detected; no extra CLI flag is normally required.
+- Long SVG labels can now be reproduced on the same validated path for suitable physical label sizes.
+- Suitable long bitmap and SVG inputs are auto-detected; no extra CLI flag is normally required.
 - Known risk: some printers can enter a bad firmware state (freeze/no reset path) after failed sessions.
 
 Read this first: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
@@ -130,7 +131,7 @@ Useful options:
 - `--bt-preflight`: enable Bluetooth wakeup/scan/l2ping preflight before sending.
 - `--slow`: fallback timing mode using original template pacing.
 - `--aggressive`: riskier transport mode with extra post-trigger frames and shorter inter-frame delay.
-- `--long-label-svg`: use the current long SVG research preset.
+- `--long-label-svg`: explicit override for the validated long SVG preset based on `InkscapeTest2/job_002`.
 - `--long-label-bitmap`: explicit override for the current best long bitmap preset based on `InkscapeTest2/job_002`.
 - `--lzma-encoder java|python|xz`: transfer encoder backend. `java` is the current default and known-good path.
 - `--compat-raster-preset ...`: reverse-engineering/testing override. Normal users should not need this.
@@ -166,16 +167,22 @@ Send with explicit Bluetooth wakeup/preflight:
 sudo python3 scripts/katasymbol_print.py <image> --bt-preflight
 ```
 
-Long physical SVG label preset:
+Long physical SVG label:
 
 ```bash
-sudo python3 scripts/katasymbol_print.py Inkscape-Test.svg --long-label-svg
+sudo python3 scripts/katasymbol_print.py Inkscape-Test.svg
 ```
 
 Note:
 
-- `--long-label-svg` is still an experimental frontend path.
-- The long-label transport/raster path itself is understood, but SVG rasterization is not yet matched to the vendor app as closely as the bitmap path.
+- suitable long SVG inputs now auto-select the validated long-label SVG path
+- `--long-label-svg` remains available as an explicit override
+- the validated SVG preset currently uses:
+  - `rsvg-convert`
+  - `svg_pixels_per_mm = 12.0`
+  - `dither = threshold`
+  - `threshold = 230`
+  - `bbox_inset_y = 1`
 
 Long physical bitmap label:
 
@@ -185,8 +192,9 @@ sudo python3 scripts/katasymbol_print.py Inkscape-Test.png
 
 Current assessment:
 
-- this is the best known long-label path
-- auto-selection chooses the long bitmap preset for suitable wide bitmap inputs
+- bitmap and SVG reference cases now converge to identical dry-run `btbuf` artifacts
+- auto-selection chooses the validated long-label preset for suitable wide bitmap and SVG inputs
+- the bitmap path remains the simplest physical reference when debugging frontend questions
 - `--long-label-bitmap` remains available as an explicit override
 
 Slower fallback mode for diagnostics:
@@ -215,6 +223,11 @@ python3 scripts/analyze_lzma_encoders.py
 - Failure handling and operational notes: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 - Reverse engineering workflow: [docs/REVERSE_ENGINEERING_HOWTO.md](docs/REVERSE_ENGINEERING_HOWTO.md)
 - AI/LLM handover context: [INFO_FOR_AI.md](INFO_FOR_AI.md)
+
+Frontend comparison helpers for maintainers / AI sessions:
+
+- `scripts/compare_svg_bitmap_frontend.py`: compare SVG rasterization against a bitmap reference before binarization
+- `scripts/sweep_svg_postprocess.py`: sweep SVG grayscale postprocessing against a bitmap reference
 
 ## Transparency
 
