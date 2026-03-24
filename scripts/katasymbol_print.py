@@ -577,6 +577,11 @@ def main() -> None:
         action="store_true",
         help="Use the current best long bitmap label preset based on InkscapeTest2/job_002",
     )
+    basic.add_argument(
+        "--diagnostic-bitmap-passthrough",
+        action="store_true",
+        help="Use a narrow diagnostic long-bitmap path for already prepared black/white raster test images",
+    )
 
     image_group = ap.add_argument_group("Image Preparation")
     image_group.add_argument("--no-prepare", action="store_true", help="Disable preprocessing pipeline")
@@ -698,7 +703,7 @@ def main() -> None:
     )
     experimental.add_argument(
         "--compat-raster-preset",
-        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289"],
+        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289", "vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"],
         default="",
         help="Raster compatibility preset for known test cases",
     )
@@ -794,9 +799,11 @@ def main() -> None:
     keep_template_aabb = bool(cfg_get(cfg, "transfer.keep_template_aabb")) or args.keep_template_aabb
     long_label_svg = bool(cfg_get(cfg, "transfer.long_label_svg_preset")) or args.long_label_svg
     long_label_bitmap = bool(cfg_get(cfg, "transfer.long_label_bitmap_preset")) or args.long_label_bitmap
+    diagnostic_bitmap_passthrough = args.diagnostic_bitmap_passthrough
     explicit_long_label_controls = bool(
         args.long_label_svg
         or args.long_label_bitmap
+        or args.diagnostic_bitmap_passthrough
         or args.template_dump_dir
         or args.template_job is not None
         or args.compat_raster_preset
@@ -840,12 +847,13 @@ def main() -> None:
         bbox_fit_mode = "stretch"
         bbox_align_x = "left"
         bbox_align_y = "top"
-        bbox_inset_y = 1
+        bbox_inset_y = 2
         bbox_offset_y = 0
         raster_y_phase = 15
         dither = "threshold"
         threshold = 230
         svg_pixels_per_mm = 12.0
+        offset_y = 1
 
     if long_label_bitmap:
         template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
@@ -855,11 +863,29 @@ def main() -> None:
         bbox_fit_mode = "stretch"
         bbox_align_x = "left"
         bbox_align_y = "top"
-        bbox_inset_y = 1
+        bbox_inset_y = 2
         bbox_offset_y = 0
         raster_y_phase = 15
         dither = "threshold"
         threshold = 230
+        offset_y = 1
+
+    if diagnostic_bitmap_passthrough:
+        template_dump_cfg = "out/decode/dumpstate-2026-03-23-21-40-19"
+        template_dump_arg = template_dump_cfg
+        template_job = 1
+        compat_raster_preset = "decoded-template-bbox"
+        bbox_fit_mode = "stretch"
+        bbox_align_x = "left"
+        bbox_align_y = "top"
+        bbox_inset_y = 4
+        bbox_offset_y = 0
+        raster_y_phase = 0
+        dither = "threshold"
+        threshold = 230
+        offset_y = 0
+        prepare_enabled = False
+        print("diagnostic bitmap passthrough preset")
 
     auto_mode = False
     if template_dump_arg:

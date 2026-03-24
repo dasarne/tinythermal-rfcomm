@@ -41,6 +41,78 @@ def _pack_canvas_columns_lsb(
     return data
 
 
+def _android_grayscale(im: Image.Image) -> Image.Image:
+    return im.convert("L")
+
+
+def _sharpen_image_ameliorate_gray(im: Image.Image) -> Image.Image:
+    src = im.convert("L")
+    width, height = src.size
+    if width < 3 or height < 3:
+        return src.copy()
+
+    out = Image.new("L", (width, height), 255)
+    spx = src.load()
+    opx = out.load()
+    kernel = (-1, -1, -1, -1, 9, -1, -1, -1, -1)
+
+    for y in range(1, height - 1):
+        for x in range(1, width - 1):
+            acc = 0
+            idx = 0
+            for ky in (-1, 0, 1):
+                for kx in (-1, 0, 1):
+                    acc += spx[x + kx, y + ky] * kernel[idx]
+                    idx += 1
+            opx[x, y] = max(0, min(255, acc))
+
+    return out
+
+
+def _floyd_steinberg_bw(im: Image.Image) -> Image.Image:
+    src = im.convert("L")
+    width, height = src.size
+    vals = [float(v) for v in src.getdata()]
+
+    def idx(x: int, y: int) -> int:
+        return y * width + x
+
+    for y in range(height):
+        for x in range(width):
+            i = idx(x, y)
+            old = vals[i]
+            new = 0.0 if old < 128.0 else 255.0
+            err = old - new
+            vals[i] = new
+
+            if x + 1 < width:
+                vals[idx(x + 1, y)] += err * 0.4375
+            if y + 1 < height:
+                vals[idx(x, y + 1)] += err * 0.3125
+                if x > 0:
+                    vals[idx(x - 1, y + 1)] += err * 0.1875
+                if x + 1 < width:
+                    vals[idx(x + 1, y + 1)] += err * 0.0625
+
+    out = Image.new("L", (width, height), 255)
+    out.putdata([0 if v < 128.0 else 255 for v in vals])
+    return out
+
+
+def _vendor_import_preprocess(im: Image.Image, use_dither: bool) -> Image.Image:
+    work = im.convert("L")
+    if work.width > 0 and work.width != 384:
+        scale = 384.0 / work.width
+        scaled_w = max(1, int(round(work.width * scale)))
+        scaled_h = max(1, int(round(work.height * scale)))
+        work = work.resize((scaled_w, scaled_h), Image.Resampling.BICUBIC)
+    work = _android_grayscale(work)
+    work = _sharpen_image_ameliorate_gray(work)
+    if use_dither:
+        work = _floyd_steinberg_bw(work)
+    return work
+
+
 def image_to_btbuf(img_path: Path, threshold: int) -> Tuple[bytes, Dict[str, int]]:
     img = load_image_any(img_path, svg_pixels_per_mm=8.0).convert("L")
     h_target = 96
@@ -247,6 +319,59 @@ def image_to_btbuf_with_canvas(
     img = load_image_any(img_path, svg_pixels_per_mm=svg_pixels_per_mm).convert("L")
     h_target = bytes_per_col * 8
     resample = Image.Resampling.NEAREST if scale_resample == "nearest" else Image.Resampling.LANCZOS
+
+    if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"):
+        full_width = canvas_width
+        if compat_raster_preset in ("vendor-like-t15-import", "vendor-like-t15-import-dither"):
+            img = _vendor_import_preprocess(
+                img,
+                use_dither=(compat_raster_preset == "vendor-like-t15-import-dither"),
+            )
+        content_scale = 88.0 / img.height if img.height > 0 else 1.0
+        scaled_w = max(1, int(img.width * content_scale))
+        scaled_h = max(1, int(img.height * content_scale))
+        scaled = img.resize((scaled_w, scaled_h), resample)
+
+        canvas = Image.new("L", (full_width, h_target), 255)
+        left = (full_width - scaled_w) // 2
+        left = min(max(0, left), max(0, full_width - scaled_w))
+        top = (h_target - scaled_h) // 2
+        top = min(max(0, top), max(0, h_target - scaled_h))
+        canvas.paste(scaled, (left, top))
+
+        data_full = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=0)
+        trim_limit = min(full_width, 48)
+        i3 = 0
+        while i3 < trim_limit:
+            col = data_full[i3 * bytes_per_col : (i3 + 1) * bytes_per_col]
+            if any(col):
+                break
+            i3 += 1
+        if i3 > 0:
+            i3 -= 1
+        no_zero_index = (trim_limit - 1) if i3 >= trim_limit else i3
+        if force_no_zero_index >= 0:
+            no_zero_index = min(full_width - 1, force_no_zero_index)
+        eff_width = max(0, full_width - no_zero_index)
+        data = data_full[no_zero_index * bytes_per_col :]
+
+        btbuf = bytearray(4000)
+        btbuf[2:4] = (0x100E).to_bytes(2, "little")
+        btbuf[4:6] = eff_width.to_bytes(2, "little")
+        btbuf[6] = bytes_per_col
+        btbuf[8:10] = (1).to_bytes(2, "little")
+        btbuf[10:12] = (1).to_bytes(2, "little")
+        btbuf[12] = no_zero_index & 0xFF
+        btbuf[13] = 0
+        btbuf[16 : 16 + len(data)] = data
+
+        used = (eff_width * bytes_per_col) + 16
+        s = sum(btbuf[2:14])
+        for k in range(1, (used // 256) + 1):
+            s += btbuf[(k * 256) - 1]
+        btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
+
+        return bytes(btbuf), {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index}
 
     def fit_into_bbox(im: Image.Image, bbox_w: int, bbox_h: int) -> Image.Image:
         if im.width <= 0 or im.height <= 0:

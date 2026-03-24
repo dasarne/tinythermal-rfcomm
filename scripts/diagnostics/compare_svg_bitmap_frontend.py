@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 import argparse
 import json
+import sys
 import time
 from pathlib import Path
 
 from PIL import Image, ImageChops, ImageOps
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PARENT_DIR = SCRIPT_DIR.parent
+if str(PARENT_DIR) not in sys.path:
+    sys.path.insert(0, str(PARENT_DIR))
 
 from image_input import get_raster_size_mm, get_svg_size_mm, load_image_any, rasterize_svg_to_image
 from katasymbol_print import choose_rotation_auto

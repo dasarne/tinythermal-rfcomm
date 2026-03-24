@@ -74,10 +74,12 @@ Current examples:
   - decodes `aabb` back to `btbuf`/renderings for analysis
 - `scripts/analyze_payloads.py`
   - comparison and reporting utilities
-- `scripts/compare_svg_bitmap_frontend.py`
+- `scripts/diagnostics/compare_svg_bitmap_frontend.py`
   - compare SVG rasterization against a bitmap reference before binarization
-- `scripts/sweep_svg_postprocess.py`
+- `scripts/diagnostics/sweep_svg_postprocess.py`
   - sweep SVG frontend postprocessing against a bitmap reference
+- `scripts/diagnostics/`
+  - grouped location for transient diagnostics, test-image generators, sweeps, and vendor-path experiments
 
 ## Operational Realities
 

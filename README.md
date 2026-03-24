@@ -226,8 +226,8 @@ python3 scripts/analyze_lzma_encoders.py
 
 Frontend comparison helpers for maintainers / AI sessions:
 
-- `scripts/compare_svg_bitmap_frontend.py`: compare SVG rasterization against a bitmap reference before binarization
-- `scripts/sweep_svg_postprocess.py`: sweep SVG grayscale postprocessing against a bitmap reference
+- `scripts/diagnostics/compare_svg_bitmap_frontend.py`: compare SVG rasterization against a bitmap reference before binarization
+- `scripts/diagnostics/sweep_svg_postprocess.py`: sweep SVG grayscale postprocessing against a bitmap reference
 
 ## Transparency
 
@@ -238,15 +238,23 @@ Frontend comparison helpers for maintainers / AI sessions:
 
 ## Repository Layout
 
-- `scripts/katasymbol_print.py`: user-facing print wrapper
-- `scripts/replay_sender.py`: low-level protocol sender
-- `scripts/raster_btbuf.py`: isolated btbuf/template raster handling
-- `scripts/encoder_backends.py`: isolated LZMA/aabb encoder backends
-- `scripts/protocol_frames.py`: isolated protocol frame/materialization logic
-- `scripts/rfcomm_transport.py`: isolated RFCOMM transport/send logging
-- `scripts/decode_spp.py`: decode outgoing SPP/BTSnoop captures
-- `scripts/decode_lzma_btbuf.py`: decode captured `aabb` payloads
-- `scripts/analyze_payloads.py`: compare and inspect payload behavior
+- Core print path:
+  - `scripts/katasymbol_print.py`: user-facing print wrapper
+  - `scripts/replay_sender.py`: low-level protocol sender
+  - `scripts/raster_btbuf.py`: isolated btbuf/template raster handling
+  - `scripts/image_input.py`: image/SVG loading and preprocessing
+  - `scripts/encoder_backends.py`: isolated LZMA/aabb encoder backends
+  - `scripts/protocol_frames.py`: isolated protocol frame/materialization logic
+  - `scripts/rfcomm_transport.py`: isolated RFCOMM transport/send logging
+- Reverse-engineering helpers:
+  - `scripts/decode_spp.py`: decode outgoing SPP/BTSnoop captures
+  - `scripts/decode_lzma_btbuf.py`: decode captured `aabb` payloads
+  - `scripts/analyze_payloads.py`: compare and inspect payload behavior
+- Diagnostics and one-off analysis live under `scripts/diagnostics/`
+  - test image generators
+  - raster/btbuf analyzers
+  - SVG/frontend comparison sweeps
+  - vendor-path experiments
 
 ## Safety Notes
 

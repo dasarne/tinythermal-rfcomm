@@ -68,7 +68,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--compat-raster-preset",
-        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289"],
+        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289", "vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"],
         default="",
         help="experimental raster compatibility preset for known test cases",
     )
