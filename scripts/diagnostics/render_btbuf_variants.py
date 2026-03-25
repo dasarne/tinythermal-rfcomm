@@ -23,17 +23,18 @@ def reverse_bits(v: int) -> int:
 
 def render_variant(
     btbuf: bytes,
+    data_offset: int,
     bit_order: str = "lsb",
     y_shift: int = 0,
     byte_row_shift: int = 0,
 ) -> Image.Image:
-    info = analyze_btbuf(btbuf)
+    info = analyze_btbuf(btbuf, data_offset=data_offset)
     if info is None:
         raise ValueError("invalid btbuf")
     width = info["width"]
     height = info["height"]
     bpc = info["bytes_per_col"]
-    data = btbuf[16 : 16 + width * bpc]
+    data = btbuf[data_offset : data_offset + width * bpc]
     img = Image.new("1", (width, height), 1)
     px = img.load()
 
@@ -65,10 +66,11 @@ def main() -> None:
     ap.add_argument("--max-y-shift", type=int, default=15)
     ap.add_argument("--include-msb", action="store_true")
     ap.add_argument("--include-byte-row-shifts", action="store_true")
+    ap.add_argument("--data-offset", type=int, default=16)
     args = ap.parse_args()
 
     btbuf = Path(args.btbuf).read_bytes()
-    info = analyze_btbuf(btbuf)
+    info = analyze_btbuf(btbuf, data_offset=args.data_offset)
     if info is None:
         raise SystemExit("invalid btbuf")
 
@@ -87,6 +89,7 @@ def main() -> None:
         "width": info["width"],
         "height": info["height"],
         "bytes_per_col": info["bytes_per_col"],
+        "data_offset": args.data_offset,
         "variants": [],
     }
 
@@ -94,7 +97,7 @@ def main() -> None:
         for byte_shift in byte_shifts:
             for y_shift in range(args.max_y_shift + 1):
                 name = f"{mode}_y{y_shift:02d}_byte{byte_shift:02d}.png"
-                img = render_variant(btbuf, bit_order=mode, y_shift=y_shift, byte_row_shift=byte_shift)
+                img = render_variant(btbuf, data_offset=args.data_offset, bit_order=mode, y_shift=y_shift, byte_row_shift=byte_shift)
                 img.convert("L").save(out_dir / name, format="PNG")
                 manifest["variants"].append(
                     {

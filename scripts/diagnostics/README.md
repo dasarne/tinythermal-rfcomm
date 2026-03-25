@@ -26,3 +26,5 @@ Current canonical diagnostics:
 - `sweep_vendor_pipelines.py`
 - `make_deductive_diagnostics.py`
 - `make_parallel_line_grid_diagnostics.py`
+- `make_wrap_diagnostics.py`
+- `make_wrap_band_diagnostics.py`

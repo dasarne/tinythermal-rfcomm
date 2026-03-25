@@ -11,6 +11,39 @@ from image_input import load_image_any
 
 
 AABB_RE = re.compile(r"\d{3}_aabb_f(\d+)_len\d+\.bin$")
+DEFAULT_BTBUF_DATA_OFFSET = 16
+T15_BTBUF_DATA_OFFSET = 14
+
+
+def _btbuf_data_offset_for_preset(compat_raster_preset: str) -> int:
+    if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither", "decoded-template-bbox"):
+        return T15_BTBUF_DATA_OFFSET
+    return DEFAULT_BTBUF_DATA_OFFSET
+
+
+def _build_btbuf(
+    data: bytes,
+    eff_width: int,
+    bytes_per_col: int,
+    no_zero_index: int,
+    data_offset: int,
+) -> bytes:
+    btbuf = bytearray(4000)
+    btbuf[2:4] = (0x100E).to_bytes(2, "little")
+    btbuf[4:6] = eff_width.to_bytes(2, "little")
+    btbuf[6] = bytes_per_col
+    btbuf[8:10] = (1).to_bytes(2, "little")
+    btbuf[10:12] = (1).to_bytes(2, "little")
+    btbuf[12] = no_zero_index & 0xFF
+    btbuf[13] = 0
+    btbuf[data_offset : data_offset + len(data)] = data
+
+    used = (eff_width * bytes_per_col) + data_offset
+    s = sum(btbuf[2:14])
+    for k in range(1, (used // 256) + 1):
+        s += btbuf[(k * 256) - 1]
+    btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
+    return bytes(btbuf)
 
 
 def _pack_canvas_columns_lsb(
@@ -128,22 +161,8 @@ def image_to_btbuf(img_path: Path, threshold: int) -> Tuple[bytes, Dict[str, int
     bpc = 12
     data = _pack_canvas_columns_lsb(canvas, threshold, bpc)
 
-    btbuf = bytearray(4000)
-    btbuf[2:4] = (0x100E).to_bytes(2, "little")
-    btbuf[4:6] = width.to_bytes(2, "little")
-    btbuf[6] = bpc
-    btbuf[8:10] = (1).to_bytes(2, "little")
-    btbuf[10:12] = (1).to_bytes(2, "little")
-    btbuf[12:14] = b"\x00\x00"
-    btbuf[16 : 16 + len(data)] = data
-
-    used = (width * bpc) + 16
-    s = sum(btbuf[2:14])
-    for k in range(1, (used // 256) + 1):
-        s += btbuf[(k * 256) - 1]
-    btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
-
-    return bytes(btbuf), {"width": width, "height": h_target, "bytes_per_col": bpc}
+    btbuf = _build_btbuf(data, width, bpc, 0, DEFAULT_BTBUF_DATA_OFFSET)
+    return btbuf, {"width": width, "height": h_target, "bytes_per_col": bpc, "data_offset": DEFAULT_BTBUF_DATA_OFFSET}
 
 
 def _lzma_decompress_best_prefix(stream: bytes) -> bytes:
@@ -201,7 +220,7 @@ def load_template_btbuf(job_dir: Path) -> Optional[bytes]:
     return _lzma_decompress_best_prefix(stream)
 
 
-def template_btbuf_layout(btbuf: bytes) -> Optional[Dict[str, int]]:
+def template_btbuf_layout(btbuf: bytes, data_offset: int = DEFAULT_BTBUF_DATA_OFFSET) -> Optional[Dict[str, int]]:
     if len(btbuf) < 14:
         return None
     width = int.from_bytes(btbuf[4:6], "little")
@@ -209,7 +228,7 @@ def template_btbuf_layout(btbuf: bytes) -> Optional[Dict[str, int]]:
     if width <= 0 or bpc <= 0:
         return None
     height = bpc * 8
-    data = btbuf[16 : 16 + width * bpc]
+    data = btbuf[data_offset : data_offset + width * bpc]
     xs: List[int] = []
     ys: List[int] = []
     for x in range(width):
@@ -226,6 +245,7 @@ def template_btbuf_layout(btbuf: bytes) -> Optional[Dict[str, int]]:
         "effective_width": width,
         "height": height,
         "no_zero_index": btbuf[12] if len(btbuf) > 12 else 0,
+        "data_offset": data_offset,
         "bbox_x": min(xs),
         "bbox_y": min(ys),
         "bbox_w": (max(xs) - min(xs)) + 1,
@@ -233,7 +253,7 @@ def template_btbuf_layout(btbuf: bytes) -> Optional[Dict[str, int]]:
     }
 
 
-def analyze_btbuf(btbuf: bytes) -> Optional[Dict[str, int]]:
+def analyze_btbuf(btbuf: bytes, data_offset: int = DEFAULT_BTBUF_DATA_OFFSET) -> Optional[Dict[str, int]]:
     if len(btbuf) < 16:
         return None
     width = int.from_bytes(btbuf[4:6], "little")
@@ -241,7 +261,7 @@ def analyze_btbuf(btbuf: bytes) -> Optional[Dict[str, int]]:
     if width <= 0 or bpc <= 0:
         return None
     height = bpc * 8
-    data = btbuf[16 : 16 + width * bpc]
+    data = btbuf[data_offset : data_offset + width * bpc]
     xs: List[int] = []
     ys: List[int] = []
     for x in range(width):
@@ -258,6 +278,7 @@ def analyze_btbuf(btbuf: bytes) -> Optional[Dict[str, int]]:
         "bytes_per_col": bpc,
         "no_zero_index": btbuf[12] if len(btbuf) > 12 else 0,
         "nonzero_cols": len(set(xs)),
+        "data_offset": data_offset,
     }
     if xs and ys:
         info.update(
@@ -273,14 +294,14 @@ def analyze_btbuf(btbuf: bytes) -> Optional[Dict[str, int]]:
     return info
 
 
-def btbuf_to_image(btbuf: bytes) -> Image.Image:
-    info = analyze_btbuf(btbuf)
+def btbuf_to_image(btbuf: bytes, data_offset: int = DEFAULT_BTBUF_DATA_OFFSET) -> Image.Image:
+    info = analyze_btbuf(btbuf, data_offset=data_offset)
     if info is None:
         raise ValueError("invalid btbuf")
     width = info["width"]
     height = info["height"]
     bpc = info["bytes_per_col"]
-    data = btbuf[16 : 16 + width * bpc]
+    data = btbuf[data_offset : data_offset + width * bpc]
     img = Image.new("1", (width, height), 1)
     px = img.load()
     for x in range(width):
@@ -319,6 +340,7 @@ def image_to_btbuf_with_canvas(
     img = load_image_any(img_path, svg_pixels_per_mm=svg_pixels_per_mm).convert("L")
     h_target = bytes_per_col * 8
     resample = Image.Resampling.NEAREST if scale_resample == "nearest" else Image.Resampling.LANCZOS
+    data_offset = _btbuf_data_offset_for_preset(compat_raster_preset)
 
     if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"):
         full_width = canvas_width
@@ -355,23 +377,8 @@ def image_to_btbuf_with_canvas(
         eff_width = max(0, full_width - no_zero_index)
         data = data_full[no_zero_index * bytes_per_col :]
 
-        btbuf = bytearray(4000)
-        btbuf[2:4] = (0x100E).to_bytes(2, "little")
-        btbuf[4:6] = eff_width.to_bytes(2, "little")
-        btbuf[6] = bytes_per_col
-        btbuf[8:10] = (1).to_bytes(2, "little")
-        btbuf[10:12] = (1).to_bytes(2, "little")
-        btbuf[12] = no_zero_index & 0xFF
-        btbuf[13] = 0
-        btbuf[16 : 16 + len(data)] = data
-
-        used = (eff_width * bytes_per_col) + 16
-        s = sum(btbuf[2:14])
-        for k in range(1, (used // 256) + 1):
-            s += btbuf[(k * 256) - 1]
-        btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
-
-        return bytes(btbuf), {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index}
+        btbuf = _build_btbuf(data, eff_width, bytes_per_col, no_zero_index, data_offset)
+        return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index, "data_offset": data_offset}
 
     def fit_into_bbox(im: Image.Image, bbox_w: int, bbox_h: int) -> Image.Image:
         if im.width <= 0 or im.height <= 0:
@@ -428,7 +435,8 @@ def image_to_btbuf_with_canvas(
             img = fit_into_bbox(img, bbox_w, bbox_h)
 
         base_btbuf = bytearray(template_btbuf[:4000])
-        base_data = bytearray(base_btbuf[16 : 16 + eff_width * bytes_per_col])
+        base_data_offset = int(template_layout.get("data_offset", data_offset))
+        base_data = bytearray(base_btbuf[base_data_offset : base_data_offset + eff_width * bytes_per_col])
 
         canvas = Image.new("L", (eff_width, h_target), 255)
         left, top = place_in_bbox(bbox_x, bbox_y, bbox_w, bbox_h, img)
@@ -443,23 +451,8 @@ def image_to_btbuf_with_canvas(
         )
         base_data[bbox_x * bytes_per_col : bbox_x * bytes_per_col + len(overlay)] = overlay
 
-        btbuf = bytearray(4000)
-        btbuf[2:4] = (0x100E).to_bytes(2, "little")
-        btbuf[4:6] = eff_width.to_bytes(2, "little")
-        btbuf[6] = bytes_per_col
-        btbuf[8:10] = (1).to_bytes(2, "little")
-        btbuf[10:12] = (1).to_bytes(2, "little")
-        btbuf[12] = no_zero_index & 0xFF
-        btbuf[13] = 0
-        btbuf[16 : 16 + len(base_data)] = base_data
-
-        used = (eff_width * bytes_per_col) + 16
-        s = sum(btbuf[2:14])
-        for k in range(1, (used // 256) + 1):
-            s += btbuf[(k * 256) - 1]
-        btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
-
-        return bytes(btbuf), {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index}
+        btbuf = _build_btbuf(bytes(base_data), eff_width, bytes_per_col, no_zero_index, data_offset)
+        return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index, "data_offset": data_offset}
 
     if compat_raster_preset in ("decoded-template-bbox", "long-label-svg-289") and template_layout is not None:
         eff_width = int(template_layout["effective_width"])
@@ -481,23 +474,8 @@ def image_to_btbuf_with_canvas(
 
         data = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=raster_y_phase)
 
-        btbuf = bytearray(4000)
-        btbuf[2:4] = (0x100E).to_bytes(2, "little")
-        btbuf[4:6] = eff_width.to_bytes(2, "little")
-        btbuf[6] = bytes_per_col
-        btbuf[8:10] = (1).to_bytes(2, "little")
-        btbuf[10:12] = (1).to_bytes(2, "little")
-        btbuf[12] = no_zero_index & 0xFF
-        btbuf[13] = 0
-        btbuf[16 : 16 + len(data)] = data
-
-        used = (eff_width * bytes_per_col) + 16
-        s = sum(btbuf[2:14])
-        for k in range(1, (used // 256) + 1):
-            s += btbuf[(k * 256) - 1]
-        btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
-
-        return bytes(btbuf), {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index}
+        btbuf = _build_btbuf(data, eff_width, bytes_per_col, no_zero_index, data_offset)
+        return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index, "data_offset": data_offset}
 
     if img.height != h_target and img.height > 0:
         new_w = max(1, int(round(img.width * (h_target / img.height))) + scale_width_bias)
@@ -557,20 +535,5 @@ def image_to_btbuf_with_canvas(
                 data_mut[off : off + bpc] = col_bytes
         data = bytes(data_mut)
 
-    btbuf = bytearray(4000)
-    btbuf[2:4] = (0x100E).to_bytes(2, "little")
-    btbuf[4:6] = eff_width.to_bytes(2, "little")
-    btbuf[6] = bpc
-    btbuf[8:10] = (1).to_bytes(2, "little")
-    btbuf[10:12] = (1).to_bytes(2, "little")
-    btbuf[12] = no_zero_index & 0xFF
-    btbuf[13] = 0
-    btbuf[16 : 16 + len(data)] = data
-
-    used = (eff_width * bpc) + 16
-    s = sum(btbuf[2:14])
-    for k in range(1, (used // 256) + 1):
-        s += btbuf[(k * 256) - 1]
-    btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
-
-    return bytes(btbuf), {"width": eff_width, "height": h_target, "bytes_per_col": bpc, "no_zero_index": no_zero_index}
+    btbuf = _build_btbuf(data, eff_width, bpc, no_zero_index, data_offset)
+    return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bpc, "no_zero_index": no_zero_index, "data_offset": data_offset}

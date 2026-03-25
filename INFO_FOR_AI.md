@@ -45,6 +45,7 @@ Known remaining visual deviation on the validated long-label reference path:
 
 - no dominant remaining issue in the validated `Inkscape-Test.png` / `Inkscape-Test.svg` case
 - if future edge cases differ, compare at the bitmap/raster stage first, not at transport
+- for the separate `W` diagnostic class, the relevant `T15`-style `btbuf` path uses `data_offset = 14`
 
 ## Trust Levels (Important)
 
@@ -57,6 +58,7 @@ Use these labels when changing behavior:
 Current examples:
 
 - `verified`: envelope sync (`7e5a`), `1001/1002`, `aabb` chunk layout, `aa10` trigger usage
+- `verified`: relevant `T15`-style `btbuf` raster payload starts at offset `14`
 - `inferred`: detailed semantic names for many `aa..` commands
 
 ## Architecture Map
@@ -80,6 +82,8 @@ Current examples:
   - sweep SVG frontend postprocessing against a bitmap reference
 - `scripts/diagnostics/`
   - grouped location for transient diagnostics, test-image generators, sweeps, and vendor-path experiments
+- `docs/DIAGNOSTIC_MATRIX.md`
+  - current working split of remaining print defects into `H/E/T/W/C`
 
 ## Operational Realities
 

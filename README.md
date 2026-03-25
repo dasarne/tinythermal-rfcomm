@@ -229,6 +229,15 @@ Frontend comparison helpers for maintainers / AI sessions:
 - `scripts/diagnostics/compare_svg_bitmap_frontend.py`: compare SVG rasterization against a bitmap reference before binarization
 - `scripts/diagnostics/sweep_svg_postprocess.py`: sweep SVG grayscale postprocessing against a bitmap reference
 
+Recent low-level finding for maintainers:
+
+- the relevant `T15`-style `btbuf` layout uses raster data starting at offset `14`, not `16`
+- this was the key fix for the previously isolated vertical-wrap (`W`) defect in the diagnostic path
+
+Current print-defect classes and their evidence matrix:
+
+- `docs/DIAGNOSTIC_MATRIX.md`
+
 ## Transparency
 
 - This repository was largely developed with GPT-5.3/Codex assistance ("vibe-coded").

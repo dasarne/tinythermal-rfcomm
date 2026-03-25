@@ -10,6 +10,7 @@ from typing import Dict, List
 from encoder_backends import encode_btbuf
 from protocol_frames import OutMsg, load_template_outgoing, materialize_frames
 from raster_btbuf import (
+    T15_BTBUF_DATA_OFFSET,
     analyze_btbuf,
     btbuf_to_image,
     image_to_btbuf,
@@ -137,7 +138,8 @@ def main() -> None:
     template = load_template_outgoing(job_dir, summary_path, messages_csv, args.template_job)
     tgeom = load_template_geometry(job_dir)
     template_btbuf = load_template_btbuf(job_dir)
-    template_layout = template_btbuf_layout(template_btbuf) if template_btbuf is not None else None
+    template_data_offset = T15_BTBUF_DATA_OFFSET
+    template_layout = template_btbuf_layout(template_btbuf, data_offset=template_data_offset) if template_btbuf is not None else None
     canvas_width = args.canvas_width
     bpc = args.bytes_per_col
     if canvas_width <= 0:
@@ -186,9 +188,10 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "btbuf.bin").write_bytes(btbuf)
     (out_dir / "lzma.bin").write_bytes(lz)
-    bt_preview = btbuf_to_image(btbuf)
+    bt_data_offset = int(geom.get("data_offset", 16))
+    bt_preview = btbuf_to_image(btbuf, data_offset=bt_data_offset)
     bt_preview.convert("L").save(out_dir / "btbuf_preview.png", format="PNG")
-    bt_info = analyze_btbuf(btbuf) or {}
+    bt_info = analyze_btbuf(btbuf, data_offset=bt_data_offset) or {}
     if {"bbox_x", "bbox_y", "bbox_w", "bbox_h"} <= set(bt_info):
         bbox = (
             int(bt_info["bbox_x"]),
@@ -209,6 +212,7 @@ def main() -> None:
         "image": args.image,
         "geometry": geom,
         "btbuf_analysis": bt_info,
+        "btbuf_data_offset": bt_data_offset,
         "lzma_len": len(lz),
         "aabb_chunks": len(aabb),
         "frames_total": len(frames),
