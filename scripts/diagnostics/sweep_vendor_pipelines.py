@@ -89,6 +89,7 @@ def render_btbuf(
         canvas_width=canvas_width,
         bytes_per_col=int(tgeom["bytes_per_col"]),
         svg_pixels_per_mm=8.0,
+        no_scale=False,
         scale_to_canvas_width=False,
         force_no_zero_index=force_no_zero_index,
         scale_width_bias=0,

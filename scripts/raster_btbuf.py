@@ -323,6 +323,7 @@ def image_to_btbuf_with_canvas(
     canvas_width: int,
     bytes_per_col: int,
     svg_pixels_per_mm: float,
+    no_scale: bool,
     scale_to_canvas_width: bool,
     force_no_zero_index: int,
     scale_width_bias: int,
@@ -349,31 +350,42 @@ def image_to_btbuf_with_canvas(
                 img,
                 use_dither=(compat_raster_preset == "vendor-like-t15-import-dither"),
             )
-        content_scale = 88.0 / img.height if img.height > 0 else 1.0
-        scaled_w = max(1, int(img.width * content_scale))
-        scaled_h = max(1, int(img.height * content_scale))
-        scaled = img.resize((scaled_w, scaled_h), resample)
+        if no_scale:
+            scaled = img
+            scaled_w, scaled_h = scaled.size
+        else:
+            content_scale = 88.0 / img.height if img.height > 0 else 1.0
+            scaled_w = max(1, int(img.width * content_scale))
+            scaled_h = max(1, int(img.height * content_scale))
+            scaled = img.resize((scaled_w, scaled_h), resample)
 
         canvas = Image.new("L", (full_width, h_target), 255)
-        left = (full_width - scaled_w) // 2
-        left = min(max(0, left), max(0, full_width - scaled_w))
-        top = (h_target - scaled_h) // 2
-        top = min(max(0, top), max(0, h_target - scaled_h))
+        if no_scale:
+            left = 0
+            top = 0
+        else:
+            left = (full_width - scaled_w) // 2
+            left = min(max(0, left), max(0, full_width - scaled_w))
+            top = (h_target - scaled_h) // 2
+            top = min(max(0, top), max(0, h_target - scaled_h))
         canvas.paste(scaled, (left, top))
 
         data_full = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=0)
-        trim_limit = min(full_width, 48)
-        i3 = 0
-        while i3 < trim_limit:
-            col = data_full[i3 * bytes_per_col : (i3 + 1) * bytes_per_col]
-            if any(col):
-                break
-            i3 += 1
-        if i3 > 0:
-            i3 -= 1
-        no_zero_index = (trim_limit - 1) if i3 >= trim_limit else i3
-        if force_no_zero_index >= 0:
-            no_zero_index = min(full_width - 1, force_no_zero_index)
+        if no_scale:
+            no_zero_index = 0
+        else:
+            trim_limit = min(full_width, 48)
+            i3 = 0
+            while i3 < trim_limit:
+                col = data_full[i3 * bytes_per_col : (i3 + 1) * bytes_per_col]
+                if any(col):
+                    break
+                i3 += 1
+            if i3 > 0:
+                i3 -= 1
+            no_zero_index = (trim_limit - 1) if i3 >= trim_limit else i3
+            if force_no_zero_index >= 0:
+                no_zero_index = min(full_width - 1, force_no_zero_index)
         eff_width = max(0, full_width - no_zero_index)
         data = data_full[no_zero_index * bytes_per_col :]
 
@@ -389,6 +401,8 @@ def image_to_btbuf_with_canvas(
 
     def fit_into_bbox(im: Image.Image, bbox_w: int, bbox_h: int) -> Image.Image:
         if im.width <= 0 or im.height <= 0:
+            return im
+        if no_scale or bbox_fit_mode == "none":
             return im
         if bbox_fit_mode == "stretch":
             return im.resize((max(1, bbox_w), max(1, bbox_h)), resample)
@@ -498,17 +512,17 @@ def image_to_btbuf_with_canvas(
             "sender_canvas": canvas.copy(),
         }
 
-    if img.height != h_target and img.height > 0:
+    if (not no_scale) and img.height != h_target and img.height > 0:
         new_w = max(1, int(round(img.width * (h_target / img.height))) + scale_width_bias)
         img = img.resize((new_w, h_target), resample)
 
-    if scale_to_canvas_width and force_no_zero_index < 0 and img.width > 0:
+    if (not no_scale) and scale_to_canvas_width and force_no_zero_index < 0 and img.width > 0:
         new_h = max(1, int(round(img.height * (canvas_width / img.width))))
         img = img.resize((canvas_width, new_h), resample)
         if img.height != h_target and img.height > 0:
             new_w = max(1, int(round(img.width * (h_target / img.height))) + scale_width_bias)
             img = img.resize((new_w, h_target), resample)
-    if img.width > canvas_width:
+    if (not no_scale) and img.width > canvas_width:
         new_h = max(1, int(round(img.height * (canvas_width / img.width))))
         img = img.resize((canvas_width, new_h), resample)
 

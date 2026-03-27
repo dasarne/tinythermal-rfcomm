@@ -143,6 +143,7 @@ Useful options:
 - `--long-label-svg`: explicit override for the validated long SVG preset based on `InkscapeTest2/job_002`.
 - `--long-label-bitmap`: explicit override for the current best long bitmap preset based on `InkscapeTest2/job_002`.
 - `--t-experimental`: currently aliases the same validated vendor-nearer long-label path; kept only as a temporary compatibility/testing flag.
+- `--no-scale`: keep the input at its current pixel/physical size instead of fitting it to the long-label renderer geometry.
 - `--lzma-encoder java|python|xz`: transfer encoder backend. `java` is the current default and known-good path.
 - `--compat-raster-preset ...`: reverse-engineering/testing override. Normal users should not need this.
 - `--fit-mode shrink|fit|stretch`
@@ -187,6 +188,8 @@ Note:
 
 - suitable long SVG inputs now auto-select the validated long-label SVG path
 - `--long-label-svg` remains available as an explicit override
+- `--no-scale` disables sender-side fitting for that path; for SVG it also falls back to printer-density rasterization (`8 px/mm`) unless you explicitly override `--svg-pixels-per-mm`
+- in `--no-scale` mode the content is placed from the top-left origin without template-derived left trimming
 - the validated SVG preset currently uses:
   - `rsvg-convert`
   - `svg_pixels_per_mm = 12.0`
@@ -212,6 +215,18 @@ Current assessment:
 - dense-horizontal (`H`) and shortened-end (`E`) diagnostics are also strongly improved on the same validated path
 - the bitmap path remains the simplest physical reference when debugging frontend questions
 - `--long-label-bitmap` remains available as an explicit override
+
+Print SVG at document size instead of fitting it to the validated long-label geometry:
+
+```bash
+sudo python3 scripts/katasymbol_print.py <image>.svg --no-scale
+```
+
+Practical current limit for that 1:1 path:
+
+- height: `12 mm`
+- recommended width: about `35-36 mm`
+- hard edge: about `39 mm`
 
 Slower fallback mode for diagnostics:
 

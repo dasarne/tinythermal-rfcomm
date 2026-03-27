@@ -634,6 +634,11 @@ def main() -> None:
         default=None,
         help="SVG rasterization density in pixels/mm before preprocessing/sender placement",
     )
+    image_group.add_argument(
+        "--no-scale",
+        action="store_true",
+        help="Keep the input at its current physical/pixel size instead of fitting it to the long-label renderer geometry",
+    )
 
     connection = ap.add_argument_group("Connection And Template")
     connection.add_argument("--config", default="", help="Path to config JSON (default: .katasymbol_print.json)")
@@ -796,6 +801,7 @@ def main() -> None:
     svg_pixels_per_mm = (
         args.svg_pixels_per_mm if args.svg_pixels_per_mm is not None else float(cfg_get(cfg, "image.svg_pixels_per_mm"))
     )
+    no_scale = args.no_scale
     prepared_image_out_cfg = str(cfg_get(cfg, "image.prepared_image_out")).strip()
     prepared_image_out = args.prepared_image_out.strip() or prepared_image_out_cfg
 
@@ -872,6 +878,11 @@ def main() -> None:
         svg_pixels_per_mm = 12.0
         offset_y = 0
         prepare_enabled = False
+        if no_scale and args.svg_pixels_per_mm is None:
+            # In no-scale mode, interpret SVG document units at printer density
+            # instead of the higher comparison density used by the validated
+            # vendor-nearer reference path.
+            svg_pixels_per_mm = 8.0
 
     if long_label_bitmap:
         template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
@@ -1044,11 +1055,13 @@ def main() -> None:
         cmd.extend(["--bbox-offset-y", str(bbox_offset_y)])
     if raster_y_phase:
         cmd.extend(["--raster-y-phase", str(raster_y_phase)])
+    if no_scale:
+        cmd.append("--no-scale")
     if mac:
         cmd.extend(["--mac", mac])
     if scale_to_canvas_width:
         cmd.append("--scale-to-canvas-width")
-    if use_template_nozero:
+    if use_template_nozero and (not no_scale):
         cmd.append("--use-template-nozero")
     if not args.dry_run:
         cmd.append("--send")

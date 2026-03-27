@@ -49,6 +49,13 @@ Current validated long-label default settings for the reference case:
 - `threshold = 230`
 - SVG only: `svg_pixels_per_mm = 12.0`
 
+Current 100%-size escape hatch:
+
+- `--no-scale` disables sender-side fitting/scaling
+- for SVG without an explicit `--svg-pixels-per-mm`, the wrapper falls back to `8 px/mm` so document units map to printer density rather than to the validated comparison density
+- in that mode, placement is top-left anchored and disables template-derived left trimming
+- practical current width for that path is about `35-36 mm` at `12 mm` height, with roughly `39 mm` as the hard edge
+
 Known remaining visual deviation on the validated long-label reference path:
 
 - no dominant remaining issue in the validated `Inkscape-Test.png` / `Inkscape-Test.svg` case
