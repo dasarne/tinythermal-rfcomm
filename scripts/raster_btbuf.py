@@ -15,7 +15,7 @@ DEFAULT_BTBUF_DATA_OFFSET = 16
 T15_BTBUF_DATA_OFFSET = 14
 
 
-def _btbuf_data_offset_for_preset(compat_raster_preset: str) -> int:
+def btbuf_data_offset_for_preset(compat_raster_preset: str) -> int:
     if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither", "decoded-template-bbox"):
         return T15_BTBUF_DATA_OFFSET
     return DEFAULT_BTBUF_DATA_OFFSET
@@ -340,7 +340,7 @@ def image_to_btbuf_with_canvas(
     img = load_image_any(img_path, svg_pixels_per_mm=svg_pixels_per_mm).convert("L")
     h_target = bytes_per_col * 8
     resample = Image.Resampling.NEAREST if scale_resample == "nearest" else Image.Resampling.LANCZOS
-    data_offset = _btbuf_data_offset_for_preset(compat_raster_preset)
+    data_offset = btbuf_data_offset_for_preset(compat_raster_preset)
 
     if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"):
         full_width = canvas_width
@@ -378,7 +378,14 @@ def image_to_btbuf_with_canvas(
         data = data_full[no_zero_index * bytes_per_col :]
 
         btbuf = _build_btbuf(data, eff_width, bytes_per_col, no_zero_index, data_offset)
-        return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index, "data_offset": data_offset}
+        return btbuf, {
+            "width": eff_width,
+            "height": h_target,
+            "bytes_per_col": bytes_per_col,
+            "no_zero_index": no_zero_index,
+            "data_offset": data_offset,
+            "sender_canvas": canvas.copy(),
+        }
 
     def fit_into_bbox(im: Image.Image, bbox_w: int, bbox_h: int) -> Image.Image:
         if im.width <= 0 or im.height <= 0:
@@ -452,7 +459,14 @@ def image_to_btbuf_with_canvas(
         base_data[bbox_x * bytes_per_col : bbox_x * bytes_per_col + len(overlay)] = overlay
 
         btbuf = _build_btbuf(bytes(base_data), eff_width, bytes_per_col, no_zero_index, data_offset)
-        return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index, "data_offset": data_offset}
+        return btbuf, {
+            "width": eff_width,
+            "height": h_target,
+            "bytes_per_col": bytes_per_col,
+            "no_zero_index": no_zero_index,
+            "data_offset": data_offset,
+            "sender_canvas": canvas.copy(),
+        }
 
     if compat_raster_preset in ("decoded-template-bbox", "long-label-svg-289") and template_layout is not None:
         eff_width = int(template_layout["effective_width"])
@@ -475,7 +489,14 @@ def image_to_btbuf_with_canvas(
         data = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=raster_y_phase)
 
         btbuf = _build_btbuf(data, eff_width, bytes_per_col, no_zero_index, data_offset)
-        return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bytes_per_col, "no_zero_index": no_zero_index, "data_offset": data_offset}
+        return btbuf, {
+            "width": eff_width,
+            "height": h_target,
+            "bytes_per_col": bytes_per_col,
+            "no_zero_index": no_zero_index,
+            "data_offset": data_offset,
+            "sender_canvas": canvas.copy(),
+        }
 
     if img.height != h_target and img.height > 0:
         new_w = max(1, int(round(img.width * (h_target / img.height))) + scale_width_bias)
@@ -536,4 +557,11 @@ def image_to_btbuf_with_canvas(
         data = bytes(data_mut)
 
     btbuf = _build_btbuf(data, eff_width, bpc, no_zero_index, data_offset)
-    return btbuf, {"width": eff_width, "height": h_target, "bytes_per_col": bpc, "no_zero_index": no_zero_index, "data_offset": data_offset}
+    return btbuf, {
+        "width": eff_width,
+        "height": h_target,
+        "bytes_per_col": bpc,
+        "no_zero_index": no_zero_index,
+        "data_offset": data_offset,
+        "sender_canvas": canvas.copy(),
+    }

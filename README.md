@@ -30,8 +30,8 @@ This repository is intentionally context-rich so future maintainers (human or AI
 - Works on Linux (tested on Manjaro/KDE) with BlueZ.
 - Protocol path is reverse-engineered from real captures.
 - Default short-label path is stable for everyday printing.
-- Long bitmap labels can now be reproduced essentially at vendor quality.
-- Long SVG labels can now be reproduced on the same validated path for suitable physical label sizes.
+- Long bitmap labels now use a vendor-nearer `T15`-style raster path and reproduce the validated reference case essentially at vendor quality.
+- Long SVG labels now use the same vendor-nearer long-label path for suitable physical label sizes.
 - Suitable long bitmap and SVG inputs are auto-detected; no extra CLI flag is normally required.
 - Known risk: some printers can enter a bad firmware state (freeze/no reset path) after failed sessions.
 
@@ -118,6 +118,15 @@ Current wrapper defaults already use the known-good production path:
 - `decoded-template-bbox` raster compatibility preset
 - Bluetooth auto-discovery/template auto-selection when available
 
+For suitable wide long-label bitmap and SVG inputs, the wrapper now switches to a separate validated vendor-nearer long-label path:
+
+- `vendor-like-t15` raster compatibility preset
+- `prepare_enabled = false`
+- `scale_resample = nearest`
+- `bbox_fit_mode = contain`
+- centered placement inside the validated long-label reference geometry
+- threshold binarization with `threshold = 230`
+
 Supported input formats:
 
 - raster: `PNG`, `JPG`
@@ -133,6 +142,7 @@ Useful options:
 - `--aggressive`: riskier transport mode with extra post-trigger frames and shorter inter-frame delay.
 - `--long-label-svg`: explicit override for the validated long SVG preset based on `InkscapeTest2/job_002`.
 - `--long-label-bitmap`: explicit override for the current best long bitmap preset based on `InkscapeTest2/job_002`.
+- `--t-experimental`: currently aliases the same validated vendor-nearer long-label path; kept only as a temporary compatibility/testing flag.
 - `--lzma-encoder java|python|xz`: transfer encoder backend. `java` is the current default and known-good path.
 - `--compat-raster-preset ...`: reverse-engineering/testing override. Normal users should not need this.
 - `--fit-mode shrink|fit|stretch`
@@ -180,9 +190,13 @@ Note:
 - the validated SVG preset currently uses:
   - `rsvg-convert`
   - `svg_pixels_per_mm = 12.0`
+  - `compat_raster_preset = vendor-like-t15`
+  - `prepare_enabled = false`
+  - `scale_resample = nearest`
+  - `bbox_fit_mode = contain`
+  - centered placement
   - `dither = threshold`
   - `threshold = 230`
-  - `bbox_inset_y = 1`
 
 Long physical bitmap label:
 
@@ -192,8 +206,10 @@ sudo python3 scripts/katasymbol_print.py Inkscape-Test.png
 
 Current assessment:
 
-- bitmap and SVG reference cases now converge to identical dry-run `btbuf` artifacts
-- auto-selection chooses the validated long-label preset for suitable wide bitmap and SVG inputs
+- bitmap and SVG reference cases now converge to near-identical dry-run `btbuf` artifacts on the new vendor-nearer long-label path
+- auto-selection chooses the validated long-label path for suitable wide bitmap and SVG inputs
+- the former `W` wrap issue and `T` top-zone issue are fixed on the validated reference case
+- dense-horizontal (`H`) and shortened-end (`E`) diagnostics are also strongly improved on the same validated path
 - the bitmap path remains the simplest physical reference when debugging frontend questions
 - `--long-label-bitmap` remains available as an explicit override
 

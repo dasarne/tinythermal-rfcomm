@@ -124,6 +124,12 @@ Until firmware behavior is fully characterized:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image>.svg --long-label-svg
    ```
+   Current validated long-label path details:
+   - uses the vendor-nearer `vendor-like-t15` raster class
+   - disables the generic prepare stage
+   - uses centered placement with `contain`
+   - uses threshold binarization with `threshold = 230`
+   - SVG additionally uses `svg_pixels_per_mm = 12.0`
 9. For long bitmap labels where the bitmap itself is the reference, the normal command now auto-selects the long bitmap path for suitable inputs:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image>.png
@@ -132,9 +138,10 @@ Until firmware behavior is fully characterized:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image>.png --long-label-bitmap
    ```
-10. The wrapper default raster preset is already the current known-good path; do not override it unless you are debugging protocol/raster behavior.
-11. The wrapper now crops white margins during preprocessing by default. Use `--no-crop-content` only if that crop is undesirable for a specific image.
-12. `--despeckle` is intentionally optional. It can remove isolated dots, but it may also alter thin artwork more than desired.
+10. `--t-experimental` currently aliases the same validated long-label path and is not needed for normal use.
+11. The wrapper default raster preset is already the current known-good path; do not override it unless you are debugging protocol/raster behavior.
+12. The wrapper now crops white margins during preprocessing by default. Use `--no-crop-content` only if that crop is undesirable for a specific image.
+13. `--despeckle` is intentionally optional. It can remove isolated dots, but it may also alter thin artwork more than desired.
 
 ## Useful Files for Bug Reports
 

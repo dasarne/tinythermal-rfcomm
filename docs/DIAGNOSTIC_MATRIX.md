@@ -110,14 +110,14 @@ Risk:
 ## Current Conclusions
 
 1. There is almost certainly more than one failure mechanism.
-2. `H` is currently the best isolated class.
-3. `W` now has a concrete low-level cause candidate and a validated diagnostic-path fix.
-4. `T` should be revisited only after `H` and `W` are better separated.
+2. `W` now has a concrete low-level cause and validated fix for the relevant `T15`-style path.
+3. `T` was later fixed on the validated long-label reference case by switching that path to the vendor-nearer `vendor-like-t15` renderer class.
+4. `H` and `E` are also strongly improved on the same validated long-label path, though they remain useful diagnostic labels for future regressions.
 5. `C` is real but currently secondary.
 
 ## Next Diagnostic Strategy
 
-1. Use a dedicated wrap-only test image for `W`.
-2. Keep `H/E` tests separate from `W`.
-3. Revisit `T` only with top-zone-specific motifs after `W` is isolated.
-4. Avoid using complex mixed motifs when the goal is to prove a single class.
+1. Keep using dedicated probes when a regression appears; avoid mixed motifs for first isolation.
+2. Check `btbuf`/vendor-class choice before tuning micro-parameters.
+3. For SVG-vs-bitmap issues, compare frontend raster output before touching transport.
+4. Treat this matrix as a regression taxonomy, not only as a list of currently open blockers.

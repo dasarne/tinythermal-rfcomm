@@ -93,6 +93,7 @@ Current strengths:
 - now a stable encoder reference path
 - named user-facing presets for known-good paths
 - dedicated frontend comparison scripts for SVG-vs-bitmap analysis
+- a validated vendor-nearer long-label raster class that now serves as the default for suitable wide bitmap/SVG inputs
 
 Current risks:
 
@@ -100,6 +101,7 @@ Current risks:
 - behavior changes are hard to localize
 - more compatibility flags will make the default path harder to reason about
 - frontend-specific presets (`SVG` vs. bitmap) can blur whether a problem belongs to rasterization or transport, even though the validated long-label reference case now converges
+- long-label behavior still depends on reference-derived renderer classes (`decoded-template-bbox` vs. `vendor-like-t15`) that are operationally understood but not yet factored into stronger domain objects
 
 ## Green-Field Architecture
 
@@ -227,5 +229,9 @@ The current SVG work established a useful pattern:
 - compare SVG raster to bitmap reference before binarization
 - compare prepared 1-bit images before sender placement
 - compare generated `btbuf` artifacts before live printing
+
+The later long-label work added another important checkpoint:
+
+- compare renderer classes against decoded vendor `btbuf` references before touching transport or Bluetooth logic
 
 Those checkpoints should be preserved even if code is refactored into cleaner modules later.

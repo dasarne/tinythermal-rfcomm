@@ -582,6 +582,11 @@ def main() -> None:
         action="store_true",
         help="Use a narrow diagnostic long-bitmap path for already prepared black/white raster test images",
     )
+    basic.add_argument(
+        "--t-experimental",
+        action="store_true",
+        help="Enable the current experimental T-fix candidate for long-label PNG/SVG paths",
+    )
 
     image_group = ap.add_argument_group("Image Preparation")
     image_group.add_argument("--no-prepare", action="store_true", help="Disable preprocessing pipeline")
@@ -800,10 +805,12 @@ def main() -> None:
     long_label_svg = bool(cfg_get(cfg, "transfer.long_label_svg_preset")) or args.long_label_svg
     long_label_bitmap = bool(cfg_get(cfg, "transfer.long_label_bitmap_preset")) or args.long_label_bitmap
     diagnostic_bitmap_passthrough = args.diagnostic_bitmap_passthrough
+    t_experimental = args.t_experimental
     explicit_long_label_controls = bool(
         args.long_label_svg
         or args.long_label_bitmap
         or args.diagnostic_bitmap_passthrough
+        or args.t_experimental
         or args.template_dump_dir
         or args.template_job is not None
         or args.compat_raster_preset
@@ -839,36 +846,49 @@ def main() -> None:
             long_label_svg = True
             print("auto long-label svg preset")
 
+    if t_experimental and (not long_label_svg) and (not long_label_bitmap):
+        src_path = Path(args.image)
+        if is_auto_long_label_bitmap_candidate(src_path):
+            long_label_bitmap = True
+            print("auto long-label bitmap preset")
+        elif is_auto_long_label_svg_candidate(src_path):
+            long_label_svg = True
+            print("auto long-label svg preset")
+
     if long_label_svg:
         template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
         template_dump_arg = template_dump_cfg
         template_job = 2
-        compat_raster_preset = "long-label-svg-289"
-        bbox_fit_mode = "stretch"
-        bbox_align_x = "left"
-        bbox_align_y = "top"
-        bbox_inset_y = 2
+        compat_raster_preset = "vendor-like-t15"
+        scale_resample = "nearest"
+        bbox_fit_mode = "contain"
+        bbox_align_x = "center"
+        bbox_align_y = "center"
+        bbox_inset_y = 0
         bbox_offset_y = 0
-        raster_y_phase = 15
+        raster_y_phase = 0
         dither = "threshold"
         threshold = 230
         svg_pixels_per_mm = 12.0
-        offset_y = 1
+        offset_y = 0
+        prepare_enabled = False
 
     if long_label_bitmap:
         template_dump_cfg = "out/decode/dumpstate-2026-03-21-21-32-39-InkscapeTest2"
         template_dump_arg = template_dump_cfg
         template_job = 2
-        compat_raster_preset = "long-label-svg-289"
-        bbox_fit_mode = "stretch"
-        bbox_align_x = "left"
-        bbox_align_y = "top"
-        bbox_inset_y = 2
+        compat_raster_preset = "vendor-like-t15"
+        scale_resample = "nearest"
+        bbox_fit_mode = "contain"
+        bbox_align_x = "center"
+        bbox_align_y = "center"
+        bbox_inset_y = 0
         bbox_offset_y = 0
-        raster_y_phase = 15
+        raster_y_phase = 0
         dither = "threshold"
         threshold = 230
-        offset_y = 1
+        offset_y = 0
+        prepare_enabled = False
 
     if diagnostic_bitmap_passthrough:
         template_dump_cfg = "out/decode/dumpstate-2026-03-23-21-40-19"
@@ -886,6 +906,10 @@ def main() -> None:
         offset_y = 0
         prepare_enabled = False
         print("diagnostic bitmap passthrough preset")
+
+    if t_experimental and (long_label_svg or long_label_bitmap):
+        # This currently aliases the validated vendor-nearer long-label path.
+        print("experimental T preset")
 
     auto_mode = False
     if template_dump_arg:

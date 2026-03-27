@@ -24,26 +24,36 @@ Goal: make printing work reliably from Linux with minimal friction, while preser
   - `sudo python3 scripts/katasymbol_print.py <image>.png`
   - suitable wide bitmap inputs now auto-select the long bitmap path
   - `--long-label-bitmap` remains available as an explicit override
-  - currently the best known long-label path
+  - now uses the vendor-nearer `vendor-like-t15` raster path
   - visually very close to the vendor app
 - Long SVG path:
   - `sudo python3 scripts/katasymbol_print.py <image>.svg`
   - suitable wide SVG inputs now auto-select the validated long SVG path
   - `--long-label-svg` remains available as an explicit override
   - validated on `Inkscape-Test.svg` against both dry-run artifacts and physical print comparison
-  - for the validated reference case, SVG and bitmap converge to identical `btbuf` output
+  - for the validated reference case, SVG and bitmap converge to near-identical `btbuf` output on the same vendor-nearer path
 
-Validated long-label SVG frontend settings for the current reference case:
+Current validated long-label default settings for the reference case:
 
-- renderer: `rsvg-convert`
-- `svg_pixels_per_mm = 12.0`
+- `compat_raster_preset = vendor-like-t15`
+- `prepare_enabled = false`
+- `scale_resample = nearest`
+- `bbox_fit_mode = contain`
+- `bbox_align_x = center`
+- `bbox_align_y = center`
+- `bbox_inset_y = 0`
+- `bbox_offset_y = 0`
+- `raster_y_phase = 0`
+- `offset_y = 0`
 - `dither = threshold`
 - `threshold = 230`
-- `bbox_inset_y = 1`
+- SVG only: `svg_pixels_per_mm = 12.0`
 
 Known remaining visual deviation on the validated long-label reference path:
 
 - no dominant remaining issue in the validated `Inkscape-Test.png` / `Inkscape-Test.svg` case
+- previously tracked classes `W` and `T` are fixed on the validated reference case
+- previously isolated `H` and `E` diagnostics are also strongly improved on the same path
 - if future edge cases differ, compare at the bitmap/raster stage first, not at transport
 - for the separate `W` diagnostic class, the relevant `T15`-style `btbuf` path uses `data_offset = 14`
 
@@ -83,7 +93,8 @@ Current examples:
 - `scripts/diagnostics/`
   - grouped location for transient diagnostics, test-image generators, sweeps, and vendor-path experiments
 - `docs/DIAGNOSTIC_MATRIX.md`
-  - current working split of remaining print defects into `H/E/T/W/C`
+  - working split of print defects into `H/E/T/W/C`
+  - useful as history even though the validated reference case is now largely converged
 
 ## Operational Realities
 
