@@ -713,7 +713,7 @@ def main() -> None:
     )
     experimental.add_argument(
         "--compat-raster-preset",
-        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289", "vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"],
+        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"],
         default="",
         help="Raster compatibility preset for known test cases",
     )

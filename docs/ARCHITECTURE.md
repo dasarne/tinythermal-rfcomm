@@ -101,7 +101,7 @@ Current risks:
 - behavior changes are hard to localize
 - more compatibility flags will make the default path harder to reason about
 - frontend-specific presets (`SVG` vs. bitmap) can blur whether a problem belongs to rasterization or transport, even though the validated long-label reference case now converges
-- long-label behavior still depends on reference-derived renderer classes (`decoded-template-bbox` vs. `vendor-like-t15`) that are operationally understood but not yet factored into stronger domain objects
+- productive long-label behavior is now unified on the vendor-nearer `vendor-like-t15` raster family; `decoded-template-bbox` remains only as a diagnostic/reference tool
 
 ## Green-Field Architecture
 

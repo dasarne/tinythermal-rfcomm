@@ -7,13 +7,17 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-from encoder_backends import encode_btbuf
-from protocol_frames import OutMsg, load_template_outgoing, materialize_frames
+from PIL import Image
+
+from encoder_backends import encode_btbuf, encode_btbuf_pages
+from protocol_frames import OutMsg, load_template_outgoing, materialize_frames, materialize_frames_grouped
 from raster_btbuf import (
+    VENDOR_LIKE_T15_PRESETS,
     analyze_btbuf,
     btbuf_data_offset_for_preset,
     btbuf_to_image,
     image_to_btbuf,
+    image_to_t15_btbuf_pages_with_canvas,
     image_to_btbuf_with_canvas,
     load_template_btbuf,
     load_template_geometry,
@@ -69,7 +73,7 @@ def main() -> None:
     )
     ap.add_argument(
         "--compat-raster-preset",
-        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "long-label-svg-289", "vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"],
+        choices=["", "legacy-testpattern-64x32", "decoded-template-bbox", "template-btbuf-overlay", "vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"],
         default="",
         help="experimental raster compatibility preset for known test cases",
     )
@@ -158,36 +162,56 @@ def main() -> None:
         force_no_zero_index = args.force_no_zero_index
     else:
         force_no_zero_index = int(tgeom.get("no_zero_index", 0)) if (tgeom and args.use_template_nozero) else -1
-    btbuf, geom = image_to_btbuf_with_canvas(
-        Path(args.image),
-        args.threshold,
-        canvas_width,
-        bpc,
-        svg_pixels_per_mm=args.svg_pixels_per_mm,
-        no_scale=args.no_scale,
-        scale_to_canvas_width=args.scale_to_canvas_width,
-        force_no_zero_index=force_no_zero_index,
-        scale_width_bias=args.scale_width_bias,
-        scale_resample=args.scale_resample,
-        compat_raster_preset=args.compat_raster_preset,
-        bbox_fit_mode=args.bbox_fit_mode,
-        bbox_align_x=args.bbox_align_x,
-        bbox_align_y=args.bbox_align_y,
-        bbox_inset_y=args.bbox_inset_y,
-        bbox_offset_y=args.bbox_offset_y,
-        raster_y_phase=args.raster_y_phase,
-        template_btbuf=template_btbuf,
-        template_layout=template_layout,
-    )
+    btbuf_pages = None
+    if args.no_scale and args.compat_raster_preset in VENDOR_LIKE_T15_PRESETS:
+        btbuf_pages, geom = image_to_t15_btbuf_pages_with_canvas(
+            Path(args.image),
+            args.threshold,
+            canvas_width,
+            bpc,
+            svg_pixels_per_mm=args.svg_pixels_per_mm,
+            no_scale=args.no_scale,
+            scale_resample=args.scale_resample,
+            compat_raster_preset=args.compat_raster_preset,
+        )
+        btbuf = btbuf_pages[0]
+    else:
+        btbuf, geom = image_to_btbuf_with_canvas(
+            Path(args.image),
+            args.threshold,
+            canvas_width,
+            bpc,
+            svg_pixels_per_mm=args.svg_pixels_per_mm,
+            no_scale=args.no_scale,
+            scale_to_canvas_width=args.scale_to_canvas_width,
+            force_no_zero_index=force_no_zero_index,
+            scale_width_bias=args.scale_width_bias,
+            scale_resample=args.scale_resample,
+            compat_raster_preset=args.compat_raster_preset,
+            bbox_fit_mode=args.bbox_fit_mode,
+            bbox_align_x=args.bbox_align_x,
+            bbox_align_y=args.bbox_align_y,
+            bbox_inset_y=args.bbox_inset_y,
+            bbox_offset_y=args.bbox_offset_y,
+            raster_y_phase=args.raster_y_phase,
+            template_btbuf=template_btbuf,
+            template_layout=template_layout,
+        )
     repo_root = Path(__file__).resolve().parent.parent
-    lz, aabb = encode_btbuf(btbuf, args.lzma_encoder, repo_root)
-    frames = materialize_frames(
-        template,
-        aabb,
-        stop_after_aa10=(not args.full_sequence),
-        post_frames_after_aa10=args.post_frames_after_aa10,
-        keep_template_aabb=args.keep_template_aabb,
-    )
+    if btbuf_pages is not None:
+        lz_streams, aabb_groups = encode_btbuf_pages(btbuf_pages, args.lzma_encoder, repo_root)
+        lz = b"".join(lz_streams)
+        aabb = [pl for group in aabb_groups for pl in group]
+        frames = materialize_frames_grouped(template, aabb_groups)
+    else:
+        lz, aabb = encode_btbuf(btbuf, args.lzma_encoder, repo_root)
+        frames = materialize_frames(
+            template,
+            aabb,
+            stop_after_aa10=(not args.full_sequence),
+            post_frames_after_aa10=args.post_frames_after_aa10,
+            keep_template_aabb=args.keep_template_aabb,
+        )
 
     ts = time.strftime("%Y%m%d-%H%M%S")
     out_dir = Path(args.out_dir) / ts
@@ -198,19 +222,46 @@ def main() -> None:
     if sender_canvas is not None:
         sender_canvas.convert("L").save(out_dir / "sender_canvas.png", format="PNG")
     bt_data_offset = int(geom.get("data_offset", 16))
-    bt_preview = btbuf_to_image(btbuf, data_offset=bt_data_offset)
-    bt_preview.convert("L").save(out_dir / "btbuf_preview.png", format="PNG")
-    bt_info = analyze_btbuf(btbuf, data_offset=bt_data_offset) or {}
-    if {"bbox_x", "bbox_y", "bbox_w", "bbox_h"} <= set(bt_info):
-        bbox = (
-            int(bt_info["bbox_x"]),
-            int(bt_info["bbox_y"]),
-            int(bt_info["bbox_x"] + bt_info["bbox_w"]),
-            int(bt_info["bbox_y"] + bt_info["bbox_h"]),
-        )
-        bt_preview.crop(bbox).convert("L").save(out_dir / "btbuf_preview_cropped.png", format="PNG")
+    if btbuf_pages is not None:
+        previews = []
+        infos = []
+        for i, page in enumerate(btbuf_pages):
+            page_preview = btbuf_to_image(page, data_offset=bt_data_offset)
+            page_preview.convert("L").save(out_dir / f"btbuf_page_{i:03d}.png", format="PNG")
+            previews.append(page_preview.convert("L"))
+            infos.append(analyze_btbuf(page, data_offset=bt_data_offset) or {})
+        total_w = sum(im.width for im in previews)
+        max_h = max((im.height for im in previews), default=0)
+        bt_preview = Image.new(previews[0].mode, (total_w, max_h), 255)
+        xoff = 0
+        for im in previews:
+            bt_preview.paste(im, (xoff, 0))
+            xoff += im.width
+        bt_preview.save(out_dir / "btbuf_preview.png", format="PNG")
+        bt_info = {
+            "pages": infos,
+            "width": bt_preview.width,
+            "height": bt_preview.height,
+            "bytes_per_col": bpc,
+            "page_count": len(btbuf_pages),
+        }
+    else:
+        bt_preview = btbuf_to_image(btbuf, data_offset=bt_data_offset)
+        bt_preview.convert("L").save(out_dir / "btbuf_preview.png", format="PNG")
+        bt_info = analyze_btbuf(btbuf, data_offset=bt_data_offset) or {}
+        if {"bbox_x", "bbox_y", "bbox_w", "bbox_h"} <= set(bt_info):
+            bbox = (
+                int(bt_info["bbox_x"]),
+                int(bt_info["bbox_y"]),
+                int(bt_info["bbox_x"] + bt_info["bbox_w"]),
+                int(bt_info["bbox_y"] + bt_info["bbox_h"]),
+            )
+            bt_preview.crop(bbox).convert("L").save(out_dir / "btbuf_preview_cropped.png", format="PNG")
     for i, p in enumerate(aabb):
         (out_dir / f"aabb_{i:03d}.bin").write_bytes(p)
+    if btbuf_pages is not None:
+        for i, page in enumerate(btbuf_pages):
+            (out_dir / f"btbuf_page_{i:03d}.bin").write_bytes(page)
     with (out_dir / "frames.bin").open("wb") as f:
         for _, fr, _ts in frames:
             f.write(fr)

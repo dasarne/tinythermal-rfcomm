@@ -15,8 +15,15 @@ DEFAULT_BTBUF_DATA_OFFSET = 16
 T15_BTBUF_DATA_OFFSET = 14
 
 
+VENDOR_LIKE_T15_PRESETS = (
+    "vendor-like-t15",
+    "vendor-like-t15-import",
+    "vendor-like-t15-import-dither",
+)
+
+
 def btbuf_data_offset_for_preset(compat_raster_preset: str) -> int:
-    if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither", "decoded-template-bbox"):
+    if compat_raster_preset in (*VENDOR_LIKE_T15_PRESETS, "decoded-template-bbox"):
         return T15_BTBUF_DATA_OFFSET
     return DEFAULT_BTBUF_DATA_OFFSET
 
@@ -30,6 +37,32 @@ def _build_btbuf(
 ) -> bytes:
     btbuf = bytearray(4000)
     btbuf[2:4] = (0x100E).to_bytes(2, "little")
+    btbuf[4:6] = eff_width.to_bytes(2, "little")
+    btbuf[6] = bytes_per_col
+    btbuf[8:10] = (1).to_bytes(2, "little")
+    btbuf[10:12] = (1).to_bytes(2, "little")
+    btbuf[12] = no_zero_index & 0xFF
+    btbuf[13] = 0
+    btbuf[data_offset : data_offset + len(data)] = data
+
+    used = (eff_width * bytes_per_col) + data_offset
+    s = sum(btbuf[2:14])
+    for k in range(1, (used // 256) + 1):
+        s += btbuf[(k * 256) - 1]
+    btbuf[0:2] = (s & 0xFFFF).to_bytes(2, "little")
+    return bytes(btbuf)
+
+
+def _build_t15_btbuf_page(
+    data: bytes,
+    eff_width: int,
+    bytes_per_col: int,
+    no_zero_index: int,
+    page_flags: int,
+    data_offset: int,
+) -> bytes:
+    btbuf = bytearray(4000)
+    btbuf[2:4] = page_flags.to_bytes(2, "little")
     btbuf[4:6] = eff_width.to_bytes(2, "little")
     btbuf[6] = bytes_per_col
     btbuf[8:10] = (1).to_bytes(2, "little")
@@ -144,6 +177,133 @@ def _vendor_import_preprocess(im: Image.Image, use_dither: bool) -> Image.Image:
     if use_dither:
         work = _floyd_steinberg_bw(work)
     return work
+
+
+def _prepare_vendor_like_t15_canvas(
+    img_path: Path,
+    threshold: int,
+    canvas_width: int,
+    bytes_per_col: int,
+    svg_pixels_per_mm: float,
+    no_scale: bool,
+    scale_resample: str,
+    compat_raster_preset: str,
+) -> Tuple[Image.Image, Dict[str, int]]:
+    img = load_image_any(img_path, svg_pixels_per_mm=svg_pixels_per_mm).convert("L")
+    h_target = bytes_per_col * 8
+    resample = Image.Resampling.NEAREST if scale_resample == "nearest" else Image.Resampling.LANCZOS
+
+    if compat_raster_preset in ("vendor-like-t15-import", "vendor-like-t15-import-dither"):
+        img = _vendor_import_preprocess(
+            img,
+            use_dither=(compat_raster_preset == "vendor-like-t15-import-dither"),
+        )
+
+    if no_scale:
+        scaled = img
+    else:
+        content_scale = 88.0 / img.height if img.height > 0 else 1.0
+        scaled_w = max(1, int(img.width * content_scale))
+        scaled_h = max(1, int(img.height * content_scale))
+        scaled = img.resize((scaled_w, scaled_h), resample)
+
+    full_width = max(canvas_width, scaled.width) if no_scale else canvas_width
+    canvas = Image.new("L", (full_width, h_target), 255)
+    if no_scale:
+        left = 0
+        top = 0
+    else:
+        left = (full_width - scaled.width) // 2
+        left = min(max(0, left), max(0, full_width - scaled.width))
+        top = (h_target - scaled.height) // 2
+        top = min(max(0, top), max(0, h_target - scaled.height))
+    canvas.paste(scaled, (left, top))
+
+    data_full = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=0)
+    trim_limit = min(full_width, 48)
+    i3 = 0
+    while i3 < trim_limit:
+        col = data_full[i3 * bytes_per_col : (i3 + 1) * bytes_per_col]
+        if any(col):
+            break
+        i3 += 1
+    if i3 > 0:
+        i3 -= 1
+    no_zero_index = (trim_limit - 1) if i3 >= trim_limit else i3
+    if no_scale and scaled.width <= canvas_width:
+        no_zero_index = 0
+
+    return canvas, {
+        "full_width": full_width,
+        "height": h_target,
+        "bytes_per_col": bytes_per_col,
+        "no_zero_index": no_zero_index,
+    }
+
+
+def image_to_t15_btbuf_pages_with_canvas(
+    img_path: Path,
+    threshold: int,
+    canvas_width: int,
+    bytes_per_col: int,
+    svg_pixels_per_mm: float,
+    no_scale: bool,
+    scale_resample: str,
+    compat_raster_preset: str,
+) -> Tuple[List[bytes], Dict[str, int]]:
+    data_offset = T15_BTBUF_DATA_OFFSET
+    canvas, info = _prepare_vendor_like_t15_canvas(
+        img_path=img_path,
+        threshold=threshold,
+        canvas_width=canvas_width,
+        bytes_per_col=bytes_per_col,
+        svg_pixels_per_mm=svg_pixels_per_mm,
+        no_scale=no_scale,
+        scale_resample=scale_resample,
+        compat_raster_preset=compat_raster_preset,
+    )
+    full_width = int(info["full_width"])
+    no_zero_index = int(info["no_zero_index"])
+    column_left = max(0, full_width - no_zero_index)
+    data_full = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=0)
+
+    current_x = no_zero_index
+    pages: List[bytes] = []
+    first_page = True
+    while column_left > 0:
+        if column_left > 332:
+            page_width = 332
+            page_flags = 0x1002
+        else:
+            page_width = column_left
+            page_flags = 0x100C if not first_page else 0x100E
+        page_no_zero = no_zero_index if first_page else 0
+        page_data = data_full[current_x * bytes_per_col : (current_x + page_width) * bytes_per_col]
+        pages.append(
+            _build_t15_btbuf_page(
+                data=page_data,
+                eff_width=page_width,
+                bytes_per_col=bytes_per_col,
+                no_zero_index=page_no_zero,
+                page_flags=page_flags,
+                data_offset=data_offset,
+            )
+        )
+        current_x += page_width
+        column_left -= page_width
+        first_page = False
+
+    return pages, {
+        "width": max(0, full_width - no_zero_index),
+        "full_width": full_width,
+        "height": int(info["height"]),
+        "bytes_per_col": bytes_per_col,
+        "no_zero_index": no_zero_index,
+        "data_offset": data_offset,
+        "page_count": len(pages),
+        "page_widths": [int.from_bytes(p[4:6], "little") for p in pages],
+        "sender_canvas": canvas.copy(),
+    }
 
 
 def image_to_btbuf(img_path: Path, threshold: int) -> Tuple[bytes, Dict[str, int]]:
@@ -343,58 +503,41 @@ def image_to_btbuf_with_canvas(
     resample = Image.Resampling.NEAREST if scale_resample == "nearest" else Image.Resampling.LANCZOS
     data_offset = btbuf_data_offset_for_preset(compat_raster_preset)
 
-    if compat_raster_preset in ("vendor-like-t15", "vendor-like-t15-import", "vendor-like-t15-import-dither"):
-        full_width = canvas_width
-        if compat_raster_preset in ("vendor-like-t15-import", "vendor-like-t15-import-dither"):
-            img = _vendor_import_preprocess(
-                img,
-                use_dither=(compat_raster_preset == "vendor-like-t15-import-dither"),
-            )
-        if no_scale:
-            scaled = img
-            scaled_w, scaled_h = scaled.size
-        else:
-            content_scale = 88.0 / img.height if img.height > 0 else 1.0
-            scaled_w = max(1, int(img.width * content_scale))
-            scaled_h = max(1, int(img.height * content_scale))
-            scaled = img.resize((scaled_w, scaled_h), resample)
-
-        canvas = Image.new("L", (full_width, h_target), 255)
-        if no_scale:
-            left = 0
-            top = 0
-        else:
-            left = (full_width - scaled_w) // 2
-            left = min(max(0, left), max(0, full_width - scaled_w))
-            top = (h_target - scaled_h) // 2
-            top = min(max(0, top), max(0, h_target - scaled_h))
-        canvas.paste(scaled, (left, top))
-
-        data_full = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=0)
-        if no_scale:
-            no_zero_index = 0
-        else:
-            trim_limit = min(full_width, 48)
-            i3 = 0
-            while i3 < trim_limit:
-                col = data_full[i3 * bytes_per_col : (i3 + 1) * bytes_per_col]
-                if any(col):
-                    break
-                i3 += 1
-            if i3 > 0:
-                i3 -= 1
-            no_zero_index = (trim_limit - 1) if i3 >= trim_limit else i3
-            if force_no_zero_index >= 0:
-                no_zero_index = min(full_width - 1, force_no_zero_index)
-        eff_width = max(0, full_width - no_zero_index)
-        data = data_full[no_zero_index * bytes_per_col :]
-
-        btbuf = _build_btbuf(data, eff_width, bytes_per_col, no_zero_index, data_offset)
+    if compat_raster_preset in VENDOR_LIKE_T15_PRESETS:
+        btbuf_pages, page_geom = image_to_t15_btbuf_pages_with_canvas(
+            img_path=img_path,
+            threshold=threshold,
+            canvas_width=canvas_width,
+            bytes_per_col=bytes_per_col,
+            svg_pixels_per_mm=svg_pixels_per_mm,
+            no_scale=no_scale,
+            scale_resample=scale_resample,
+            compat_raster_preset=compat_raster_preset,
+        )
+        canvas = page_geom["sender_canvas"]
+        full_width = int(page_geom["full_width"])
+        if force_no_zero_index >= 0:
+            forced_no_zero = min(max(0, full_width - 1), force_no_zero_index)
+            data_full = _pack_canvas_columns_lsb(canvas, threshold, bytes_per_col, y_phase=0)
+            eff_width = max(0, full_width - forced_no_zero)
+            page_data = data_full[forced_no_zero * bytes_per_col :]
+            btbuf = _build_btbuf(page_data, eff_width, bytes_per_col, forced_no_zero, data_offset)
+            return btbuf, {
+                "width": eff_width,
+                "height": h_target,
+                "bytes_per_col": bytes_per_col,
+                "no_zero_index": forced_no_zero,
+                "data_offset": data_offset,
+                "sender_canvas": canvas.copy(),
+            }
+        if len(btbuf_pages) != 1:
+            raise ValueError("single-page T15 conversion expected one page")
+        btbuf = btbuf_pages[0]
         return btbuf, {
-            "width": eff_width,
+            "width": int(page_geom["width"]),
             "height": h_target,
             "bytes_per_col": bytes_per_col,
-            "no_zero_index": no_zero_index,
+            "no_zero_index": int(page_geom["no_zero_index"]),
             "data_offset": data_offset,
             "sender_canvas": canvas.copy(),
         }
@@ -482,7 +625,7 @@ def image_to_btbuf_with_canvas(
             "sender_canvas": canvas.copy(),
         }
 
-    if compat_raster_preset in ("decoded-template-bbox", "long-label-svg-289") and template_layout is not None:
+    if compat_raster_preset == "decoded-template-bbox" and template_layout is not None:
         eff_width = int(template_layout["effective_width"])
         no_zero_index = int(template_layout["no_zero_index"])
         bbox_x = int(template_layout["bbox_x"])

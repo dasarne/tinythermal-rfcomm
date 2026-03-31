@@ -140,8 +140,8 @@ Useful options:
 - `--bt-preflight`: enable Bluetooth wakeup/scan/l2ping preflight before sending.
 - `--slow`: fallback timing mode using original template pacing.
 - `--aggressive`: riskier transport mode with extra post-trigger frames and shorter inter-frame delay.
-- `--long-label-svg`: explicit override for the validated long SVG preset based on `InkscapeTest2/job_002`.
-- `--long-label-bitmap`: explicit override for the current best long bitmap preset based on `InkscapeTest2/job_002`.
+- `--long-label-svg`: explicit override for the validated vendor-nearer long SVG path.
+- `--long-label-bitmap`: explicit override for the validated vendor-nearer long bitmap path.
 - `--t-experimental`: currently aliases the same validated vendor-nearer long-label path; kept only as a temporary compatibility/testing flag.
 - `--no-scale`: keep the input at its current pixel/physical size instead of fitting it to the long-label renderer geometry.
 - `--lzma-encoder java|python|xz`: transfer encoder backend. `java` is the current default and known-good path.
@@ -227,6 +227,13 @@ Practical current limit for that 1:1 path:
 - height: `12 mm`
 - recommended width: about `35-36 mm`
 - hard edge: about `39 mm`
+
+Implementation note:
+
+- the older reference-bound long-label raster special case has been removed from the productive path
+- long-label printing now uses one vendor-nearer `vendor-like-t15` raster family:
+  - fitted/centered mode for the normal long-label workflow
+  - top-left document-faithful mode for `--no-scale`
 
 Slower fallback mode for diagnostics:
 

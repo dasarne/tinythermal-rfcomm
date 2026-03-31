@@ -130,6 +130,7 @@ Until firmware behavior is fully characterized:
    - uses centered placement with `contain`
    - uses threshold binarization with `threshold = 230`
    - SVG additionally uses `svg_pixels_per_mm = 12.0`
+   - this is now the only productive long-label raster family; older reference-bound long-label special casing has been removed from normal use
 9. For long bitmap labels where the bitmap itself is the reference, the normal command now auto-selects the long bitmap path for suitable inputs:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image>.png

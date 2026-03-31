@@ -49,6 +49,12 @@ Current validated long-label default settings for the reference case:
 - `threshold = 230`
 - SVG only: `svg_pixels_per_mm = 12.0`
 
+Long-label architecture simplification:
+
+- the earlier reference-bound long-label raster special case is no longer part of the productive path
+- production long-label printing is now unified on the vendor-nearer `vendor-like-t15` family
+- the normal fitted long-label workflow and the document-faithful `--no-scale` workflow are treated as modes of the same raster family
+
 Current 100%-size escape hatch:
 
 - `--no-scale` disables sender-side fitting/scaling
