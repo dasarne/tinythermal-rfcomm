@@ -29,6 +29,7 @@ Goal: make printing work reliably from Linux with minimal friction, while preser
 - Long SVG path:
   - `sudo python3 scripts/katasymbol_print.py <image>.svg`
   - suitable wide SVG inputs now auto-select the validated long SVG path
+  - very wide SVGs with explicit physical document size can auto-switch further into the document-faithful wide-label path
   - `--long-label-svg` remains available as an explicit override
   - validated on `Inkscape-Test.svg` against both dry-run artifacts and physical print comparison
   - for the validated reference case, SVG and bitmap converge to near-identical `btbuf` output on the same vendor-nearer path
@@ -61,6 +62,7 @@ Current 100%-size escape hatch:
 - for SVG without an explicit `--svg-pixels-per-mm`, the wrapper falls back to `8 px/mm` so document units map to printer density rather than to the validated comparison density
 - in that mode, placement is top-left anchored and disables template-derived left trimming
 - practical current width for that path is about `35-36 mm` at `12 mm` height, with roughly `39 mm` as the hard edge
+- for clearly wider SVG documents with explicit `mm` dimensions, the wrapper can now auto-select the same wide-label path even without `--no-scale`
 
 Known remaining visual deviation on the validated long-label reference path:
 
@@ -69,6 +71,7 @@ Known remaining visual deviation on the validated long-label reference path:
 - previously isolated `H` and `E` diagnostics are also strongly improved on the same path
 - if future edge cases differ, compare at the bitmap/raster stage first, not at transport
 - for the separate `W` diagnostic class, the relevant `T15`-style `btbuf` path uses `data_offset = 14`
+- large dark filled areas may still show striping that also appears in manufacturer-app output; treat that as a likely print-engine effect unless the dry-run raster already reproduces it
 
 ## Trust Levels (Important)
 

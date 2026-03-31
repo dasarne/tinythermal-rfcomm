@@ -131,6 +131,7 @@ Until firmware behavior is fully characterized:
    - uses threshold binarization with `threshold = 230`
    - SVG additionally uses `svg_pixels_per_mm = 12.0`
    - this is now the only productive long-label raster family; older reference-bound long-label special casing has been removed from normal use
+   - for clearly wider SVG documents with explicit physical size, the wrapper may auto-switch into the document-faithful wide-label path instead of this one-page fitted mode
 9. For long bitmap labels where the bitmap itself is the reference, the normal command now auto-selects the long bitmap path for suitable inputs:
    ```bash
    sudo python3 scripts/katasymbol_print.py <image>.png
@@ -143,6 +144,7 @@ Until firmware behavior is fully characterized:
 11. The wrapper default raster preset is already the current known-good path; do not override it unless you are debugging protocol/raster behavior.
 12. The wrapper now crops white margins during preprocessing by default. Use `--no-crop-content` only if that crop is undesirable for a specific image.
 13. `--despeckle` is intentionally optional. It can remove isolated dots, but it may also alter thin artwork more than desired.
+14. If large black filled areas show vertical striping but the dry-run raster looks clean, compare against a manufacturer-app print before treating it as a software bug. That pattern can come from the print engine itself.
 
 ## Useful Files for Bug Reports
 

@@ -277,6 +277,21 @@ def is_auto_long_label_svg_candidate(src_path: Path) -> bool:
     return is_auto_long_label_size_mm_candidate(*size_mm)
 
 
+def is_auto_wide_no_scale_svg_candidate(src_path: Path) -> bool:
+    if src_path.suffix.lower() != ".svg":
+        return False
+    size_mm = get_svg_size_mm(src_path)
+    if size_mm is None:
+        return False
+    width_mm, height_mm = size_mm
+    if not is_auto_long_label_size_mm_candidate(width_mm, height_mm):
+        return False
+    # Above the current single-page practical width, document-faithful
+    # multi-page placement is a better default than fitting into the
+    # validated one-page reference geometry.
+    return width_mm > 39.0
+
+
 def despeckle_bw(bw: Image.Image, min_neighbors: int = 2) -> Image.Image:
     src = bw.convert("1")
     w, h = src.size
@@ -848,6 +863,10 @@ def main() -> None:
         if is_auto_long_label_bitmap_candidate(src_path):
             long_label_bitmap = True
             print("auto long-label bitmap preset")
+        elif is_auto_wide_no_scale_svg_candidate(src_path):
+            long_label_svg = True
+            no_scale = True
+            print("auto wide no-scale svg preset")
         elif is_auto_long_label_svg_candidate(src_path):
             long_label_svg = True
             print("auto long-label svg preset")
@@ -857,6 +876,10 @@ def main() -> None:
         if is_auto_long_label_bitmap_candidate(src_path):
             long_label_bitmap = True
             print("auto long-label bitmap preset")
+        elif is_auto_wide_no_scale_svg_candidate(src_path):
+            long_label_svg = True
+            no_scale = True
+            print("auto wide no-scale svg preset")
         elif is_auto_long_label_svg_candidate(src_path):
             long_label_svg = True
             print("auto long-label svg preset")

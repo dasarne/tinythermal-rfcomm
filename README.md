@@ -187,6 +187,7 @@ sudo python3 scripts/katasymbol_print.py Inkscape-Test.svg
 Note:
 
 - suitable long SVG inputs now auto-select the validated long-label SVG path
+- wider SVG inputs with explicit physical document size now auto-switch to the document-faithful wide-label path instead of being squeezed into the one-page fitted geometry
 - `--long-label-svg` remains available as an explicit override
 - `--no-scale` disables sender-side fitting for that path; for SVG it also falls back to printer-density rasterization (`8 px/mm`) unless you explicitly override `--svg-pixels-per-mm`
 - in `--no-scale` mode the content is placed from the top-left origin without template-derived left trimming
@@ -234,6 +235,12 @@ Implementation note:
 - long-label printing now uses one vendor-nearer `vendor-like-t15` raster family:
   - fitted/centered mode for the normal long-label workflow
   - top-left document-faithful mode for `--no-scale`
+- very wide SVG documents with explicit physical size can auto-select the same document-faithful wide-label path even without an explicit `--no-scale`
+
+Observed physical behavior:
+
+- large dark filled areas can still show vertical striping that also appears in the manufacturer app
+- treat that as a print-engine characteristic unless the dry-run raster already shows the same artifact
 
 Slower fallback mode for diagnostics:
 
