@@ -101,3 +101,13 @@ def encode_btbuf(btbuf: bytes, encoder: str, repo_root: Path) -> Tuple[bytes, Li
     if encoder == "python":
         return btbuf_to_aabb_payloads_python(btbuf)
     raise ValueError(f"unsupported encoder backend: {encoder}")
+
+
+def encode_btbuf_pages(btbuf_pages: List[bytes], encoder: str, repo_root: Path) -> Tuple[List[bytes], List[List[bytes]]]:
+    lz_streams: List[bytes] = []
+    aabb_groups: List[List[bytes]] = []
+    for page in btbuf_pages:
+        lz, aabb = encode_btbuf(page, encoder, repo_root)
+        lz_streams.append(lz)
+        aabb_groups.append(aabb)
+    return lz_streams, aabb_groups

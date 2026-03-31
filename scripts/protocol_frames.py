@@ -127,3 +127,31 @@ def materialize_frames(
             if post_left == 0:
                 stop = True
     return frames
+
+
+def materialize_frames_grouped(
+    template: List[OutMsg],
+    aabb_groups: List[List[bytes]],
+) -> List[Tuple[str, bytes, float]]:
+    if not aabb_groups:
+        return []
+
+    first_aa5c = next((m for m in template if m.cmd_hex == "aa5c"), None)
+    first_aa10 = next((m for m in template if m.cmd_hex == "aa10"), None)
+    if first_aa5c is None or first_aa10 is None:
+        raise ValueError("template missing aa5c or aa10")
+
+    prelude: List[Tuple[str, bytes, float]] = []
+    for m in template:
+        if m.frame_start >= first_aa5c.frame_start:
+            break
+        prelude.append((m.cmd_hex, build_1001(m.cmd_hex, m.payload), m.time_start))
+
+    frames = list(prelude)
+    for group in aabb_groups:
+        p = payload_start_trans(512, len(group))
+        frames.append(("aa5c", build_1001("aa5c", p), first_aa5c.time_start))
+        for pl in group:
+            frames.append(("aabb", build_1002_aabb(pl), first_aa5c.time_start))
+        frames.append(("aa10", build_1001("aa10", first_aa10.payload), first_aa10.time_start))
+    return frames
