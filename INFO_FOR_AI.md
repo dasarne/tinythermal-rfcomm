@@ -20,6 +20,8 @@ Goal: make printing work reliably from Linux with minimal friction, while preser
 - Short/default path:
   - `sudo python3 scripts/katasymbol_print.py <image>`
   - verified working
+  - first-time Bluetooth inspection can now be done with `python3 scripts/katasymbol_print.py --doctor`
+  - `--mac` is usually not required if auto-discovery succeeds
 - Long bitmap path:
   - `sudo python3 scripts/katasymbol_print.py <image>.png`
   - suitable wide bitmap inputs now auto-select the long bitmap path
@@ -117,6 +119,7 @@ Current examples:
 - Printer firmware can become unstable/frozen.
 - Bluetooth link stability dominates reliability (`l2ping` success is a strong prerequisite).
 - "Technically valid send_log" does not always guarantee physical print.
+- Actual RFCOMM send may still need `sudo` on typical Linux setups even though dry-runs and `--doctor` do not.
 
 See:
 

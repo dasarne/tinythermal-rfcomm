@@ -3,6 +3,8 @@ import argparse
 import json
 import os
 import re
+import shutil
+import tempfile
 import time
 from pathlib import Path
 from typing import Dict, List
@@ -31,7 +33,7 @@ def main() -> None:
     ap.add_argument("--template-job", type=int, default=5, help="1-based job index in summary.json")
     ap.add_argument("--image", required=True, help="input PNG/JPG to print")
     ap.add_argument("--threshold", type=int, default=125, help="binarization threshold (0..255)")
-    ap.add_argument("--out-dir", default="out/replay_sender")
+    ap.add_argument("--out-dir", default="")
     ap.add_argument("--send", action="store_true", help="actually send over RFCOMM")
     ap.add_argument("--mac", default="", help="printer bluetooth MAC, required with --send")
     ap.add_argument("--channel", type=int, default=1, help="RFCOMM channel")
@@ -213,96 +215,109 @@ def main() -> None:
             keep_template_aabb=args.keep_template_aabb,
         )
 
-    ts = time.strftime("%Y%m%d-%H%M%S")
-    out_dir = Path(args.out_dir) / ts
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "btbuf.bin").write_bytes(btbuf)
-    (out_dir / "lzma.bin").write_bytes(lz)
-    sender_canvas = geom.pop("sender_canvas", None) if isinstance(geom, dict) else None
-    if sender_canvas is not None:
-        sender_canvas.convert("L").save(out_dir / "sender_canvas.png", format="PNG")
-    bt_data_offset = int(geom.get("data_offset", 16))
-    if btbuf_pages is not None:
-        previews = []
-        infos = []
-        for i, page in enumerate(btbuf_pages):
-            page_preview = btbuf_to_image(page, data_offset=bt_data_offset)
-            page_preview.convert("L").save(out_dir / f"btbuf_page_{i:03d}.png", format="PNG")
-            previews.append(page_preview.convert("L"))
-            infos.append(analyze_btbuf(page, data_offset=bt_data_offset) or {})
-        total_w = sum(im.width for im in previews)
-        max_h = max((im.height for im in previews), default=0)
-        bt_preview = Image.new(previews[0].mode, (total_w, max_h), 255)
-        xoff = 0
-        for im in previews:
-            bt_preview.paste(im, (xoff, 0))
-            xoff += im.width
-        bt_preview.save(out_dir / "btbuf_preview.png", format="PNG")
-        bt_info = {
-            "pages": infos,
-            "width": bt_preview.width,
-            "height": bt_preview.height,
-            "bytes_per_col": bpc,
-            "page_count": len(btbuf_pages),
-        }
+    persist_artifacts = bool(args.out_dir.strip()) or (not args.send)
+    temp_root: str | None = None
+    if persist_artifacts:
+        base_out = Path(args.out_dir) if args.out_dir.strip() else Path("out/replay_sender")
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        out_dir = base_out / ts
+        out_dir.mkdir(parents=True, exist_ok=True)
     else:
-        bt_preview = btbuf_to_image(btbuf, data_offset=bt_data_offset)
-        bt_preview.convert("L").save(out_dir / "btbuf_preview.png", format="PNG")
-        bt_info = analyze_btbuf(btbuf, data_offset=bt_data_offset) or {}
-        if {"bbox_x", "bbox_y", "bbox_w", "bbox_h"} <= set(bt_info):
-            bbox = (
-                int(bt_info["bbox_x"]),
-                int(bt_info["bbox_y"]),
-                int(bt_info["bbox_x"] + bt_info["bbox_w"]),
-                int(bt_info["bbox_y"] + bt_info["bbox_h"]),
-            )
-            bt_preview.crop(bbox).convert("L").save(out_dir / "btbuf_preview_cropped.png", format="PNG")
-    for i, p in enumerate(aabb):
-        (out_dir / f"aabb_{i:03d}.bin").write_bytes(p)
-    if btbuf_pages is not None:
-        for i, page in enumerate(btbuf_pages):
-            (out_dir / f"btbuf_page_{i:03d}.bin").write_bytes(page)
-    with (out_dir / "frames.bin").open("wb") as f:
-        for _, fr, _ts in frames:
-            f.write(fr)
+        temp_root = tempfile.mkdtemp(prefix="katasymbol-send-")
+        out_dir = Path(temp_root)
+    try:
+        (out_dir / "btbuf.bin").write_bytes(btbuf)
+        (out_dir / "lzma.bin").write_bytes(lz)
+        sender_canvas = geom.pop("sender_canvas", None) if isinstance(geom, dict) else None
+        if sender_canvas is not None:
+            sender_canvas.convert("L").save(out_dir / "sender_canvas.png", format="PNG")
+        bt_data_offset = int(geom.get("data_offset", 16))
+        if btbuf_pages is not None:
+            previews = []
+            infos = []
+            for i, page in enumerate(btbuf_pages):
+                page_preview = btbuf_to_image(page, data_offset=bt_data_offset)
+                page_preview.convert("L").save(out_dir / f"btbuf_page_{i:03d}.png", format="PNG")
+                previews.append(page_preview.convert("L"))
+                infos.append(analyze_btbuf(page, data_offset=bt_data_offset) or {})
+            total_w = sum(im.width for im in previews)
+            max_h = max((im.height for im in previews), default=0)
+            bt_preview = Image.new(previews[0].mode, (total_w, max_h), 255)
+            xoff = 0
+            for im in previews:
+                bt_preview.paste(im, (xoff, 0))
+                xoff += im.width
+            bt_preview.save(out_dir / "btbuf_preview.png", format="PNG")
+            bt_info = {
+                "pages": infos,
+                "width": bt_preview.width,
+                "height": bt_preview.height,
+                "bytes_per_col": bpc,
+                "page_count": len(btbuf_pages),
+            }
+        else:
+            bt_preview = btbuf_to_image(btbuf, data_offset=bt_data_offset)
+            bt_preview.convert("L").save(out_dir / "btbuf_preview.png", format="PNG")
+            bt_info = analyze_btbuf(btbuf, data_offset=bt_data_offset) or {}
+            if {"bbox_x", "bbox_y", "bbox_w", "bbox_h"} <= set(bt_info):
+                bbox = (
+                    int(bt_info["bbox_x"]),
+                    int(bt_info["bbox_y"]),
+                    int(bt_info["bbox_x"] + bt_info["bbox_w"]),
+                    int(bt_info["bbox_y"] + bt_info["bbox_h"]),
+                )
+                bt_preview.crop(bbox).convert("L").save(out_dir / "btbuf_preview_cropped.png", format="PNG")
+        for i, p in enumerate(aabb):
+            (out_dir / f"aabb_{i:03d}.bin").write_bytes(p)
+        if btbuf_pages is not None:
+            for i, page in enumerate(btbuf_pages):
+                (out_dir / f"btbuf_page_{i:03d}.bin").write_bytes(page)
+        with (out_dir / "frames.bin").open("wb") as f:
+            for _, fr, _ts in frames:
+                f.write(fr)
 
-    meta = {
-        "template_dump_dir": str(dump_dir),
-        "template_job": args.template_job,
-        "image": args.image,
-        "geometry": geom,
-        "btbuf_analysis": bt_info,
-        "btbuf_data_offset": bt_data_offset,
-        "lzma_len": len(lz),
-        "aabb_chunks": len(aabb),
-        "frames_total": len(frames),
-        "frames": [{"index": i, "cmd": c, "len": len(fr)} for i, (c, fr, _ts) in enumerate(frames)],
-    }
-    (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+        meta = {
+            "template_dump_dir": str(dump_dir),
+            "template_job": args.template_job,
+            "image": args.image,
+            "geometry": geom,
+            "btbuf_analysis": bt_info,
+            "btbuf_data_offset": bt_data_offset,
+            "lzma_len": len(lz),
+            "aabb_chunks": len(aabb),
+            "frames_total": len(frames),
+            "frames": [{"index": i, "cmd": c, "len": len(fr)} for i, (c, fr, _ts) in enumerate(frames)],
+        }
+        (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
 
-    if args.send:
-        if not args.mac:
-            raise SystemExit("--mac required with --send")
-        channels = [args.channel]
-        if args.channels.strip():
-            channels = [int(x.strip()) for x in args.channels.split(",") if x.strip()]
-        events: List[Dict[str, object]] = []
-        try:
-            used_ch, events = send_frames_try_channels(
-                args.mac,
-                channels,
-                frames,
-                args.connect_timeout,
-                args.recv_timeout,
-                args.delay_ms,
-                args.timing_scale,
-            )
-            meta["send_channel"] = used_ch
-        finally:
+        if args.send:
+            if not args.mac:
+                raise SystemExit("--mac required with --send")
+            channels = [args.channel]
+            if args.channels.strip():
+                channels = [int(x.strip()) for x in args.channels.split(",") if x.strip()]
+            events: List[Dict[str, object]] = []
+            try:
+                used_ch, events = send_frames_try_channels(
+                    args.mac,
+                    channels,
+                    frames,
+                    args.connect_timeout,
+                    args.recv_timeout,
+                    args.delay_ms,
+                    args.timing_scale,
+                )
+                meta["send_channel"] = used_ch
+            finally:
+                (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
+                (out_dir / "send_log.json").write_text(json.dumps(events, indent=2))
+
+        if persist_artifacts:
             (out_dir / "meta.json").write_text(json.dumps(meta, indent=2))
-            (out_dir / "send_log.json").write_text(json.dumps(events, indent=2))
-
-    print(out_dir)
+            print(out_dir)
+    finally:
+        if (not persist_artifacts) and temp_root is not None:
+            shutil.rmtree(temp_root, ignore_errors=True)
 
 
 if __name__ == "__main__":

@@ -90,17 +90,36 @@ scan off
 quit
 ```
 
-2. Optional link check:
+2. Optional first-time diagnosis:
+
+```bash
+python3 scripts/katasymbol_print.py --doctor
+```
+
+This shows:
+
+- whether a configured MAC already exists
+- which Bluetooth devices are visible
+- which printer the current auto-discovery would choose
+- whether running with `sudo` is likely necessary on this system
+
+3. Optional link check:
 
 ```bash
 sudo l2ping -c 3 AA:BB:CC:DD:EE:FF
 ```
 
-3. Print:
+4. Print:
 
 ```bash
-sudo python3 scripts/katasymbol_print.py test_pattern_64x32.png --mac AA:BB:CC:DD:EE:FF
+sudo python3 scripts/katasymbol_print.py test_pattern_64x32.png
 ```
+
+Notes:
+
+- `--mac` is usually not required; the wrapper auto-discovers a suitable printer when possible
+- if auto-discovery picks the wrong device or does not find one, retry with `--doctor` and then pass `--mac AA:BB:CC:DD:EE:FF` explicitly
+- `sudo` is typically needed for the actual RFCOMM send on many Linux setups; dry-runs and `--doctor` do not require it
 
 ## User CLI
 
@@ -134,7 +153,8 @@ Supported input formats:
 
 Useful options:
 
-- `--mac <MAC>`: explicit printer MAC.
+- `--doctor`: inspect Bluetooth/config state and show the current auto-discovery candidate.
+- `--mac <MAC>`: explicit printer MAC if auto-discovery is unsuitable or disabled.
 - `--dry-run`: build payload/artifacts only, do not send.
 - `--prepare-only`: only run image preprocessing, then exit (no protocol build/send).
 - `--bt-preflight`: enable Bluetooth wakeup/scan/l2ping preflight before sending.

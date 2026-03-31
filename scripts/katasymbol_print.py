@@ -546,18 +546,89 @@ def discover_printer_mac(cfg: dict[str, Any], cli_patterns: list[str]) -> tuple[
     return best_mac, best_name
 
 
+def print_doctor(cfg: dict[str, Any], cfg_path: Path, cli_patterns: list[str]) -> None:
+    print("Katasymbol doctor")
+    print(f"config: {cfg_path}")
+    print(f"running_as_root: {'yes' if os.geteuid() == 0 else 'no'}")
+    print("root_note: non-root runs may still work, but RFCOMM send often needs sudo on typical Linux setups")
+
+    cfg_mac = str(cfg_get(cfg, "printer.mac")).strip().upper()
+    print(f"configured_mac: {cfg_mac or '(none)'}")
+    print(f"auto_discover: {'yes' if bool(cfg_get(cfg, 'printer.auto_discover')) else 'no'}")
+    print(f"name_patterns: {', '.join(str(x) for x in cfg_get(cfg, 'printer.name_patterns'))}")
+    print(f"channels: {cfg_get(cfg, 'printer.channels')}")
+
+    run_capture(["bluetoothctl", "power", "on"])
+    rc, out, err = run_capture(["bluetoothctl", "devices"])
+    devices: list[tuple[str, str]] = []
+    scan_used = False
+    if rc == 0:
+        devices = parse_bluetoothctl_devices(out)
+    if not devices:
+        scan_out = maybe_scan_for_devices(int(cfg_get(cfg, "printer.auto_scan_seconds")))
+        scan_used = True
+        rc, out, err = run_capture(["bluetoothctl", "devices"])
+        if rc == 0:
+            devices = parse_bluetoothctl_devices(out)
+        if not devices:
+            devices = parse_scan_output_for_devices(scan_out)
+
+    if rc != 0 and not devices:
+        print("bluetoothctl_devices: failed")
+        print((err or out).strip())
+        return
+
+    print(f"bluetooth_devices_found: {len(devices)}")
+    if scan_used:
+        print("scan_used: yes")
+    if not devices:
+        print("doctor_result: no Bluetooth devices found; pair/trust the printer first")
+        return
+
+    pattern_cfg = [str(x).lower() for x in cfg_get(cfg, "printer.name_patterns")]
+    patterns = [p for p in pattern_cfg + [p.lower() for p in cli_patterns] if p]
+    scored: list[tuple[int, str, str, str]] = []
+    for mac, name in devices:
+        info = bluetooth_info(mac)
+        score = score_device(name, info, patterns)
+        scored.append((score, mac, name, info))
+    scored.sort(reverse=True)
+
+    print("visible_devices:")
+    for score, mac, name, info in scored[:8]:
+        paired = "yes" if "Paired: yes" in info else "no"
+        trusted = "yes" if "Trusted: yes" in info else "no"
+        serial = "yes" if "UUID: Serial Port" in info else "no"
+        print(f"  - {name} ({mac}) score={score} paired={paired} trusted={trusted} serial_port={serial}")
+
+    best_score, best_mac, best_name, _best_info = scored[0]
+    if best_score >= 0:
+        print(f"auto_candidate: {best_name} ({best_mac})")
+        if cfg_mac and cfg_mac == best_mac:
+            print("mac_state: configured MAC matches current auto-discovery result")
+        elif cfg_mac:
+            print("mac_state: configured MAC differs from current auto-discovery result")
+        else:
+            print("mac_state: no MAC configured; current auto-discovery result looks usable")
+    else:
+        print("auto_candidate: none")
+        print("mac_state: set printer.mac in config or pass --mac explicitly")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(
         description="Katasymbol print CLI with image preprocessing, known-good defaults and Bluetooth auto-discovery.",
         epilog=(
             "Typical use:\n"
             "  sudo python3 scripts/katasymbol_print.py image.png\n"
+            "First-time diagnosis:\n"
+            "  python3 scripts/katasymbol_print.py --doctor\n"
             "Slow diagnostic dry-run:\n"
             "  python3 scripts/katasymbol_print.py image.png --slow --dry-run"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    ap.add_argument("image", help="Input image file (PNG/JPG/SVG)")
+    ap.add_argument("image", nargs="?", help="Input image file (PNG/JPG/SVG)")
 
     basic = ap.add_argument_group("Basic Workflow")
     basic.add_argument("--mac", default="", help="Printer MAC address (optional with auto-discovery)")
@@ -659,6 +730,7 @@ def main() -> None:
     connection.add_argument("--config", default="", help="Path to config JSON (default: .katasymbol_print.json)")
     connection.add_argument("--init-config", action="store_true", help="Create default config if missing and exit")
     connection.add_argument("--print-config", action="store_true", help="Print effective config and exit")
+    connection.add_argument("--doctor", action="store_true", help="Inspect Bluetooth/config state and show the current auto-discovery candidate")
     connection.add_argument(
         "--printer-name-pattern",
         action="append",
@@ -757,6 +829,11 @@ def main() -> None:
     if args.print_config:
         print(json.dumps(cfg, indent=2))
         return
+    if args.doctor:
+        print_doctor(cfg, cfg_path, args.printer_name_pattern)
+        return
+    if not args.image:
+        raise SystemExit("image is required unless using --doctor, --init-config, or --print-config")
 
     if not Path(args.image).exists():
         raise SystemExit(f"image not found: {args.image}")
@@ -866,7 +943,6 @@ def main() -> None:
         elif is_auto_wide_no_scale_svg_candidate(src_path):
             long_label_svg = True
             no_scale = True
-            print("auto wide no-scale svg preset")
         elif is_auto_long_label_svg_candidate(src_path):
             long_label_svg = True
             print("auto long-label svg preset")
@@ -879,7 +955,6 @@ def main() -> None:
         elif is_auto_wide_no_scale_svg_candidate(src_path):
             long_label_svg = True
             no_scale = True
-            print("auto wide no-scale svg preset")
         elif is_auto_long_label_svg_candidate(src_path):
             long_label_svg = True
             print("auto long-label svg preset")
@@ -1014,14 +1089,11 @@ def main() -> None:
     if not mac and (not args.dry_run):
         if auto_discover_enabled:
             mac, dev_name = discover_printer_mac(cfg, args.printer_name_pattern)
-            print(f"auto printer: {dev_name} ({mac})")
+            print(f"Printer: {dev_name} ({mac})")
         else:
             raise SystemExit("--mac required with --send (auto-discovery disabled)")
     if mac and (not args.dry_run) and bt_preflight_enabled:
         bluetooth_preflight(mac, int(cfg_get(cfg, "printer.auto_scan_seconds")))
-
-    if not args.dry_run and os.geteuid() != 0:
-        print("warning: non-root run may fail to open RFCOMM socket; retry with sudo", file=sys.stderr)
 
     replay = Path(__file__).resolve().parent / "replay_sender.py"
     cmd = [
@@ -1033,8 +1105,6 @@ def main() -> None:
         str(template_job),
         "--image",
         str(image_for_sender),
-        "--out-dir",
-        out_dir,
         "--threshold",
         str(threshold),
         "--channel",
@@ -1082,6 +1152,8 @@ def main() -> None:
         cmd.append("--no-scale")
     if mac:
         cmd.extend(["--mac", mac])
+    if args.out_dir:
+        cmd.extend(["--out-dir", out_dir])
     if scale_to_canvas_width:
         cmd.append("--scale-to-canvas-width")
     if use_template_nozero and (not no_scale):
@@ -1092,6 +1164,8 @@ def main() -> None:
         cmd.append("--keep-template-aabb")
 
     rc = run(cmd)
+    if rc != 0 and (not args.dry_run) and os.geteuid() != 0:
+        print("hint: RFCOMM send failed as normal user; retry with sudo if Bluetooth connect/open was denied", file=sys.stderr)
     if prep_meta is not None:
         meta_out = Path(out_dir) / "_last_prepare_meta.json"
         meta_out.parent.mkdir(parents=True, exist_ok=True)

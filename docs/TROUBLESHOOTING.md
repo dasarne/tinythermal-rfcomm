@@ -14,6 +14,12 @@ If that happens:
 Run in this order:
 
 ```bash
+python3 scripts/katasymbol_print.py --doctor
+```
+
+Then, if you need lower-level Bluetooth checks:
+
+```bash
 bluetoothctl show
 bluetoothctl devices
 bluetoothctl info AA:BB:CC:DD:EE:FF
@@ -21,6 +27,7 @@ sudo l2ping -i hci0 -c 3 AA:BB:CC:DD:EE:FF
 ```
 
 If `l2ping` fails, RFCOMM print will fail too.
+`--doctor` does not send anything; it only reports config state, visible devices, and the current auto-discovery candidate.
 
 ## Error: `No route to host`
 
